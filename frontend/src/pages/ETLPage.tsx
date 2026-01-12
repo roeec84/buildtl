@@ -16,7 +16,11 @@ import { SourceNode, TransformNode, SinkNode } from '../components/ETL/ETLNodes'
 import { SourceConfigModal } from '../components/ETL/SourceConfigModal';
 import { TransformConfigModal } from '../components/ETL/TransformConfigModal';
 import { SinkConfigModal } from '../components/ETL/SinkConfigModal';
-import { Play, Database, Wand2, FileOutput, ArrowLeft, Bot, Loader2, Save, Trash2, FileText } from 'lucide-react';
+import { Play, Database, Wand2, FileOutput, ArrowLeft, Bot, Loader2, Save, Trash2, FileText, History } from 'lucide-react';
+// ... (imports)
+
+// ... (inside component)
+
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { settingsApi, etlApi } from '../services/api';
@@ -75,6 +79,26 @@ export default function ETLPage() {
     const [currentPipelineId, setCurrentPipelineId] = React.useState<number | null>(null);
     const [pipelineName, setPipelineName] = React.useState('Untitled Pipeline');
     const [isSaving, setIsSaving] = React.useState(false);
+
+    // History State
+    const [showHistoryModal, setShowHistoryModal] = React.useState(false);
+    const [executions, setExecutions] = React.useState<any[]>([]);
+    const [selectedExecution, setSelectedExecution] = React.useState<any | null>(null);
+
+
+    const handleShowHistory = async () => {
+        if (!currentPipelineId) {
+            alert("Save pipeline first to see history");
+            return;
+        }
+        setShowHistoryModal(true);
+        try {
+            const data = await etlApi.getExecutions(currentPipelineId);
+            setExecutions(data);
+        } catch (error) {
+            console.error("Failed to fetch history:", error);
+        }
+    };
 
     // Fetch models
     const { data: models } = useQuery({
@@ -434,6 +458,14 @@ export default function ETLPage() {
                         </div>
 
                         <button
+                            onClick={handleShowHistory}
+                            className="px-3 py-2 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-colors flex items-center gap-2"
+                            title="Execution History"
+                        >
+                            <History className="w-5 h-5" />
+                        </button>
+
+                        <button
                             onClick={handleSavePipeline}
                             disabled={isSaving}
                             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
@@ -658,6 +690,98 @@ export default function ETLPage() {
                     document.body
                 )}
             </div>
+
+            {/* History Modal */}
+            {createPortal(
+                showHistoryModal && (
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-end">
+                        <div className="w-96 h-full bg-slate-900 border-l border-white/10 p-6 shadow-2xl animate-in slide-in-from-right duration-200">
+                            <div className="flex items-center justify-between mb-6">
+                                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <History className="w-5 h-5 text-indigo-400" />
+                                    Execution History
+                                </h2>
+                                <button
+                                    onClick={() => setShowHistoryModal(false)}
+                                    className="text-slate-400 hover:text-white"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            <div className="space-y-4 overflow-y-auto h-[calc(100vh-100px)]">
+                                {executions.length === 0 && (
+                                    <p className="text-slate-500 text-center py-4">No executions found.</p>
+                                )}
+                                {executions.map((exec) => (
+                                    <div
+                                        key={exec.id}
+                                        className="bg-slate-800/50 p-4 rounded-lg border border-white/5 cursor-pointer hover:bg-slate-800 transition-colors group"
+                                        onClick={() => setSelectedExecution(exec)}
+                                    >
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className={`text-xs font-bold px-2 py-1 rounded-full uppercase ${exec.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                                                exec.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                                                    'bg-blue-500/20 text-blue-400'
+                                                }`}>
+                                                {exec.status}
+                                            </span>
+                                            <span className="text-xs text-slate-500">
+                                                {new Date(exec.started_at).toLocaleString()}
+                                            </span>
+                                        </div>
+                                        {exec.status === 'completed' && exec.finished_at && (
+                                            <div className="mt-2 text-xs text-slate-400">
+                                                Duration: {((new Date(exec.finished_at).getTime() - new Date(exec.started_at).getTime()) / 1000).toFixed(1)}s
+                                            </div>
+                                        )}
+                                        {exec.error_message && (
+                                            <div className="mt-2 text-xs text-red-400 bg-red-950/30 p-2 rounded max-h-32 overflow-y-auto font-mono whitespace-pre-wrap">
+                                                {exec.error_message}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                ),
+                document.body
+            )}
+
+            {/* Execution Details JSON Modal */}
+            {createPortal(
+                selectedExecution && (
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[210] flex items-center justify-center p-4">
+                        <div className="bg-slate-900 border border-white/10 rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-in zoom-in-95 duration-200">
+                            <div className="flex items-center justify-between p-4 border-b border-white/10">
+                                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <FileText className="w-5 h-5 text-indigo-400" />
+                                    Execution Details
+                                </h2>
+                                <button
+                                    onClick={() => setSelectedExecution(null)}
+                                    className="text-slate-400 hover:text-white"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                            <div className="p-4 overflow-auto font-mono text-xs text-slate-300 bg-slate-950/50 flex-1">
+                                <pre>{JSON.stringify(selectedExecution, null, 2)}</pre>
+                            </div>
+                            <div className="p-4 border-t border-white/10 flex justify-end">
+                                <button
+                                    onClick={() => setSelectedExecution(null)}
+                                    className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm transition-colors"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                ),
+                document.body
+            )}
         </ReactFlowProvider>
     );
 };

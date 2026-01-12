@@ -257,6 +257,12 @@ export const etlApi = {
     const response = await api.post(`/api/etl/pipelines/${id}/run`);
     return response.data;
   },
+
+  getExecutions: async (pipelineId?: number) => {
+    const params = pipelineId ? { pipeline_id: pipelineId } : {};
+    const response = await api.get('/api/etl/executions', { params });
+    return response.data;
+  },
 };
 
 export const fileApi = {

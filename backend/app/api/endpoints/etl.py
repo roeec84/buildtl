@@ -290,6 +290,34 @@ async def run_pipeline(
         raise HTTPException(status_code=500, detail=f"Execution failed: {str(e)}")
 
 
+
+class ETLExecutionResponse(BaseModel):
+    id: int
+    pipeline_id: int
+    status: str
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    logs: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+@router.get("/executions", response_model=List[ETLExecutionResponse])
+async def list_executions(
+    pipeline_id: Optional[int] = None,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(ETLExecution).join(ETLPipeline).where(ETLPipeline.user_id == current_user.id)
+    
+    if pipeline_id:
+        query = query.where(ETLExecution.pipeline_id == pipeline_id)
+        
+    query = query.order_by(ETLExecution.started_at.desc())
+    
+    result = await db.execute(query)
+    return result.scalars().all()
+
 @router.get("/datasources/{id}/schema")
 async def get_datasource_schema(
     id: int,

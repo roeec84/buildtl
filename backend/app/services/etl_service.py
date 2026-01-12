@@ -514,49 +514,60 @@ class ETLService:
     @staticmethod
     async def execute_pipeline(pipeline_id: int, db_session):
         """
-        Execute an ETL pipeline.
+        Execute an ETL pipeline with execution history tracking.
         """
-        from app.models.etl import ETLPipeline, ETLDataSource
+        from app.models.etl import ETLPipeline, ETLDataSource, ETLExecution
         from sqlalchemy import select
         from sqlalchemy.orm import joinedload
         import networkx as nx
+        import traceback
+        from datetime import datetime
         
-        # 1. Fetch pipeline
-        result = await db_session.execute(
-            select(ETLPipeline).where(ETLPipeline.id == pipeline_id)
+        # 0. Create Execution Record
+        execution = ETLExecution(
+            pipeline_id=pipeline_id,
+            status="running"
         )
-        pipeline = result.scalar_one_or_none()
-        if not pipeline:
-            raise ValueError(f"Pipeline {pipeline_id} not found")
+        db_session.add(execution)
+        await db_session.commit()
+        await db_session.refresh(execution)
+        
+        try:
+            # 1. Fetch pipeline
+            result = await db_session.execute(
+                select(ETLPipeline).where(ETLPipeline.id == pipeline_id)
+            )
+            pipeline = result.scalar_one_or_none()
+            if not pipeline:
+                raise ValueError(f"Pipeline {pipeline_id} not found")
+                
+            # 2. Build DAG using NetworkX
+            G = nx.DiGraph()
             
-        # 2. Build DAG using NetworkX
-        G = nx.DiGraph()
-        
-        # Access nodes and edges directly from JSON columns
-        nodes = pipeline.nodes or []
-        edges = pipeline.edges or []
-        
-        if not nodes:
-             raise ValueError("Pipeline has no nodes")
+            # Access nodes and edges directly from JSON columns
+            nodes = pipeline.nodes or []
+            edges = pipeline.edges or []
+            
+            if not nodes:
+                 raise ValueError("Pipeline has no nodes")
 
-        for node in nodes:
-            G.add_node(node['id'], **node)
-        for edge in edges:
-            G.add_edge(edge['source'], edge['target'])
+            for node in nodes:
+                G.add_node(node['id'], **node)
+            for edge in edges:
+                G.add_edge(edge['source'], edge['target'])
+                
+            try:
+                execution_order = list(nx.topological_sort(G))
+            except nx.NetworkXUnfeasible:
+                raise ValueError("Pipeline has cycles!")
+                
+            # 3. Execute Nodes
+            # Store DataFrames in a dictionary keyed by Node ID
+            node_results = {}
             
-        try:
-            execution_order = list(nx.topological_sort(G))
-        except nx.NetworkXUnfeasible:
-            raise ValueError("Pipeline has cycles!")
+            # Initialize Spark
+            spark = ETLService.get_spark_session()
             
-        # 3. Execute Nodes
-        # Store DataFrames in a dictionary keyed by Node ID
-        node_results = {}
-        
-        # Initialize Spark
-        spark = ETLService.get_spark_session()
-        
-        try:
             for node_id in execution_order:
                 node = G.nodes[node_id]
                 node_type = node.get('type')
@@ -635,17 +646,50 @@ class ETLService:
                     )
                     datasource = ds_result.scalar_one_or_none()
                     if not datasource:
-                        raise ValueError(f"Datasource {datasource_id} not found")
-                        
-                    ETLService.write_sink_data(input_df, datasource, table_name, mode=write_mode)
+                         raise ValueError(f"Sink Datasource {datasource_id} not found")
                     
-            return {"status": "success", "message": "Pipeline executed successfully"}
+                    # Write Data
+                    # For now only Postgres sink supported via JDBC
+                    # TODO: Abstract this based on Linked Service type
+                    if datasource.linked_service and datasource.linked_service.service_type == 'postgresql':
+                        db_config = datasource.linked_service.connection_config
+                        jdbc_url = f"jdbc:postgresql://{db_config['host']}:{db_config['port']}/{db_config['database']}"
+                        
+                        writer = input_df.write \
+                            .format("jdbc") \
+                            .option("url", jdbc_url) \
+                            .option("dbtable", table_name) \
+                            .option("user", db_config['user']) \
+                            .option("password", db_config['password']) \
+                            .option("driver", "org.postgresql.Driver") \
+                            .mode(write_mode)
+                            
+                        writer.save()
+                    else:
+                        print(f"Unsupported sink type: {datasource.linked_service.service_type if datasource.linked_service else 'None'}")
+                        
+            # Mark Success
+            execution.status = "completed"
+            execution.finished_at = datetime.utcnow()
+            await db_session.commit()
+            
+            return {
+                "execution_id": execution.id,
+                "status": "completed",
+                "message": "Pipeline executed successfully"
+            }
             
         except Exception as e:
-            print(f"Pipeline execution failed: {e}")
-            import traceback
-            traceback.print_exc()
-            raise Exception(f"Pipeline execution failed: {str(e)}")
+            # Mark Failure
+            error_msg = f"{str(e)}\n\n{traceback.format_exc()}"
+            print(f"Pipeline execution failed: {error_msg}")
+            
+            execution.status = "failed"
+            execution.error_message = error_msg
+            execution.finished_at = datetime.utcnow()
+            await db_session.commit()
+            
+            raise e
             
     @staticmethod
     async def generate_transformation_code(prompt: str, upstream_schemas: dict, model_name: str = "gpt-4o", api_key: str = None) -> str:
