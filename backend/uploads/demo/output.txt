@@ -1,0 +1,11 @@
+=== Sales Report ===
+Revenue by Product:
+laptop: 16000.0
+mouse: 825.0
+keyboard: 1575.0
+Quantity by Region:
+us: 37
+eu: 31
+: 2
+Most Popular Product:
+Most Popular Product: mouse (33 units)
