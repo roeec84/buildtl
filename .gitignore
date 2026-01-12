@@ -1,8 +1,8 @@
 *.env
 check_collections.py
 clear_data.py
-drivers
-uploads
-migrate_collections.py
-test.py
-test_setup.py
+backend/drivers
+backend/uploads
+backend/migrate_collections.py
+backend/test.py
+backend/test_setup.py
