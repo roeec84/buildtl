@@ -1,1 +1,8 @@
 *.env
+check_collections.py
+clear_data.py
+drivers
+uploads
+migrate_collections.py
+test.py
+test_setup.py
