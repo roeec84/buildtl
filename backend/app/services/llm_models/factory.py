@@ -6,13 +6,13 @@ from .anthropic import AnthropicModel
 
 class LLMModelFactory:
     """
-    Factory class to create LLM models using registered strategies.
+    Factory class to create LLM models using registered models.
     Implements the Strategy Pattern context.
     """
     
     def __init__(self):
-        # Register available strategies
-        self.strategies: List[LLMBaseModel] = [
+        # Register available models
+        self.models: List[LLMBaseModel] = [
             OpenAIModel(),
             AnthropicModel()
         ]
@@ -25,11 +25,11 @@ class LLMModelFactory:
         api_key: Optional[str] = None
     ) -> BaseChatModel:
         """
-        Iterates through registered strategies to find one that supports the model_name.
+        Iterates through registered models to find one that supports the model_name.
         """
-        for strategy in self.strategies:
-            if strategy.is_provider_for(model_name):
-                return strategy.create_model(
+        for model in self.models:
+            if model.is_provider_for(model_name):
+                return model.create_model(
                     model_name=model_name,
                     temperature=temperature,
                     max_tokens=max_tokens,
@@ -37,8 +37,8 @@ class LLMModelFactory:
                 )
         
        
-        fallback_strategy = OpenAIModel()
-        return fallback_strategy.create_model(
+        fallback_model = OpenAIModel()
+        return fallback_model.create_model(
             model_name=model_name,
             temperature=temperature,
             max_tokens=max_tokens,

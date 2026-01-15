@@ -229,14 +229,18 @@ export const BuilderChat = forwardRef<BuilderChatRef, BuilderChatProps>(({ onAdd
                         <Paper
                             sx={{
                                 p: 2,
-                                bgcolor: msg.type === 'human' ? 'transparent' : 'rgba(255,255,255,0.8)',
-                                color: msg.type === 'human' ? 'white' : 'text.primary',
-                                background: msg.type === 'human' ? 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)' : undefined,
+                                bgcolor: msg.type === 'human' ? 'rgba(79, 70, 229, 0.85)' : 'rgba(15, 23, 42, 0.6)',
+                                backdropFilter: 'blur(10px)',
+                                color: 'white',
+                                background: msg.type === 'human'
+                                    ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.8) 0%, rgba(168, 85, 247, 0.8) 100%)'
+                                    : 'rgba(15, 23, 42, 0.6)',
                                 borderRadius: 3,
-                                boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                                boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.37)',
+                                border: '1px solid rgba(255, 255, 255, 0.1)',
                             }}
                         >
-                            {msg.content && <Typography variant="body2">{msg.content}</Typography>}
+                            {msg.content && <Typography variant="body2" sx={{ whiteSpace: 'pre-line' }}>{msg.content}</Typography>}
 
                             {msg.chartConfig && (
                                 <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
@@ -248,7 +252,7 @@ export const BuilderChat = forwardRef<BuilderChatRef, BuilderChatProps>(({ onAdd
                                             setPreviewConfig(msg.chartConfig);
                                             setIsPreviewOpen(true);
                                         }}
-                                        sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'inherit', borderColor: 'rgba(255,255,255,0.3)', '&:hover': { bgcolor: 'rgba(255,255,255,0.3)' } }}
+                                        sx={{ bgcolor: 'rgba(255,255,255,0.1)', color: 'white', borderColor: 'rgba(255,255,255,0.3)', '&:hover': { bgcolor: 'rgba(255,255,255,0.2)' } }}
                                     >
                                         View
                                     </Button>
@@ -264,7 +268,7 @@ export const BuilderChat = forwardRef<BuilderChatRef, BuilderChatProps>(({ onAdd
                                                 inputRef.current?.focus();
                                             }, 100);
                                         }}
-                                        sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'inherit', borderColor: 'rgba(255,255,255,0.3)', '&:hover': { bgcolor: 'rgba(255,255,255,0.3)' } }}
+                                        sx={{ bgcolor: 'rgba(255,255,255,0.1)', color: 'white', borderColor: 'rgba(255,255,255,0.3)', '&:hover': { bgcolor: 'rgba(255,255,255,0.2)' } }}
                                     >
                                         Edit
                                     </Button>
@@ -275,35 +279,62 @@ export const BuilderChat = forwardRef<BuilderChatRef, BuilderChatProps>(({ onAdd
                 ))}
                 {isLoading && (
                     <Box sx={{ alignSelf: 'flex-start' }}>
-                        <CircularProgress size={20} />
+                        <CircularProgress size={20} sx={{ color: 'white' }} />
                     </Box>
                 )}
                 <div ref={messagesEndRef} />
             </Box>
 
-            <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.1)', display: 'flex', gap: 1 }}>
+            <Box sx={{ p: 2, borderTop: '1px solid rgba(252, 245, 245, 0.1)', display: 'flex', gap: 1 }}>
                 <TextField
                     inputRef={inputRef}
                     fullWidth
+                    multiline
+                    maxRows={4}
                     size="small"
-                    placeholder={contextConfig ? `Refining chart: ${contextConfig.title}` : "Describe a chart..."}
+                    placeholder={(!selectedDataSource || !selectedModel) ? "Select Data Source & Model first" : (contextConfig ? `Refining chart: ${contextConfig.title}` : "Describe a chart...")}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                    disabled={isLoading}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSend();
+                        }
+                    }}
+                    disabled={isLoading || !selectedDataSource || !selectedModel}
                     className="glass-input" // Use global class
                     sx={{
                         '& .MuiOutlinedInput-root': {
-                            bgcolor: 'rgba(255,255,255,0.4)',
-                            borderRadius: 2
+                            bgcolor: 'rgba(124, 189, 255, 0.6)', // Darker background
+                            backdropFilter: 'blur(5px)',
+                            borderRadius: '12px',
+                            color: 'white',
+                            '& fieldset': {
+                                borderColor: 'rgba(255, 255, 255, 0.1)',
+                            },
+                            '&:hover fieldset': {
+                                borderColor: 'rgba(99, 102, 241, 0.5)', // Indigo hint on hover
+                            },
+                            '&.Mui-focused fieldset': {
+                                borderColor: '#6366f1', // Indigo on focus
+                            }
+                        },
+                        '& .MuiInputBase-input': {
+                            color: 'white',
                         }
                     }}
                 />
                 <IconButton
                     color="primary"
                     onClick={handleSend}
-                    disabled={isLoading || !input.trim()}
-                    sx={{ bgcolor: '#4f46e5', color: 'white', '&:hover': { bgcolor: '#4338ca' } }}
+                    disabled={isLoading || !input.trim() || !selectedDataSource || !selectedModel}
+                    sx={{
+                        bgcolor: (!selectedDataSource || !selectedModel) ? 'rgba(255,255,255,0.1)' : '#6366f1',
+                        color: 'white',
+                        borderRadius: '12px',
+                        '&:hover': { bgcolor: '#4338ca' },
+                        '&.Mui-disabled': { bgcolor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.3)' }
+                    }}
                 >
                     <Send size={20} />
                 </IconButton>

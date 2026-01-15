@@ -36,18 +36,7 @@ const SettingsPage: React.FC = () => {
           >
             Models
           </button>
-          <button
-            onClick={() => setActiveTab('dataSources')}
-            className={`
-                py-2.5 px-6 rounded-lg font-medium text-sm transition-all duration-200
-                ${activeTab === 'dataSources'
-                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/25'
-                : 'text-slate-400 hover:text-white hover:bg-white/5'
-              }
-              `}
-          >
-            Data Sources
-          </button>
+          {/* Data Sources tab hidden for now */}
         </div>
 
         {/* Tab Content */}

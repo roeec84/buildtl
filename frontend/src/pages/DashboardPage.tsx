@@ -7,7 +7,7 @@ import 'react-resizable/css/styles.css';
 import { Box, Paper, IconButton, Typography, Fab, Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, List, ListItem, ListItemText, ListItemButton } from '@mui/material';
 import { ChartWidget } from '../components/Dashboard/ChartWidget';
 import { BuilderChat, type BuilderChatRef } from '../components/Dashboard/BuilderChat';
-import { GripVertical, X, MessageSquare, ChevronRight, Save, FolderOpen, Plus, Pencil, Database } from 'lucide-react';
+import { GripVertical, X, MessageSquare, ChevronRight, Save, FolderOpen, Plus, Pencil, Database, Settings } from 'lucide-react';
 import { dashboardApi } from '../services/api';
 
 // Robustly get Responsive component
@@ -48,10 +48,19 @@ export const DashboardPage = () => {
     useEffect(() => {
         if (currentDashboard) {
             setTitleInput(currentDashboard.title);
+            localStorage.setItem('lastDashboardId', currentDashboard.id.toString());
         } else {
             setTitleInput('My Dashboard');
         }
     }, [currentDashboard]);
+
+    // Load Last Dashboard on Mount
+    useEffect(() => {
+        const lastId = localStorage.getItem('lastDashboardId');
+        if (lastId) {
+            handleLoadDashboard(Number(lastId));
+        }
+    }, []);
 
     useEffect(() => {
         const resizeObserver = new ResizeObserver((entries) => {
@@ -239,6 +248,9 @@ export const DashboardPage = () => {
                             {!isEditingTitle && <Pencil size={16} className="text-slate-400 opacity-50" />}
                         </Box>
                         <Box sx={{ display: 'flex', gap: 1 }}>
+                            <Button startIcon={<Settings size={16} />} size="small" variant="outlined" onClick={() => navigate('/settings')} sx={{ borderRadius: 2, textTransform: 'none', borderColor: '#4f46e5', color: '#4f46e5', '&:hover': { borderColor: '#4338ca', bgcolor: 'rgba(79, 70, 229, 0.08)' } }}>
+                                Settings
+                            </Button>
                             <Button startIcon={<Database size={16} />} size="small" variant="outlined" onClick={() => navigate('/etl')} sx={{ borderRadius: 2, textTransform: 'none', borderColor: '#4f46e5', color: '#4f46e5', '&:hover': { borderColor: '#4338ca', bgcolor: 'rgba(79, 70, 229, 0.08)' } }}>
                                 ETL
                             </Button>

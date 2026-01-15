@@ -18,7 +18,7 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.2.1
 
-# LLM and AI - Let pip resolve compatible versions
+# LLM and AI
 openai==2.14.0
 anthropic==0.75.0
 langchain>=0.3.0
@@ -29,9 +29,7 @@ langchain-chroma
 langchain-huggingface
 langchain-core
 langchain-text-splitters
-
 tiktoken
-ddgs
 langchain_text_splitters
 langgraph
 
