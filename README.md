@@ -33,7 +33,7 @@ A next-generation Business Intelligence platform integrating **GenAI** for natur
 
 ### Prerequisites
 *   Docker & Docker Compose
-*   OpenAI/Anthropic API Key
+*   OpenAI/Anthropic API Key (To create a model in the settings)
 
 ### Installation
 
@@ -56,4 +56,4 @@ A next-generation Business Intelligence platform integrating **GenAI** for natur
 
 4.  **Access the App**
     *   Frontend: `http://localhost:5173`
-    *   Backend API: `http://localhost:8000/docs`
+    *   Backend API: `http://localhost:8000/`
