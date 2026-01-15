@@ -9,6 +9,7 @@ import { ChartWidget } from '../components/Dashboard/ChartWidget';
 import { BuilderChat, type BuilderChatRef } from '../components/Dashboard/BuilderChat';
 import { GripVertical, X, MessageSquare, ChevronRight, Save, FolderOpen, Plus, Pencil, Database, Settings } from 'lucide-react';
 import { dashboardApi } from '../services/api';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 // Robustly get Responsive component
 const Responsive = ReactGridLayout.Responsive || (ReactGridLayout.default ? ReactGridLayout.default.Responsive : undefined);
@@ -248,6 +249,7 @@ export const DashboardPage = () => {
                             {!isEditingTitle && <Pencil size={16} className="text-slate-400 opacity-50" />}
                         </Box>
                         <Box sx={{ display: 'flex', gap: 1 }}>
+                            <ThemeToggle />
                             <Button startIcon={<Settings size={16} />} size="small" variant="outlined" onClick={() => navigate('/settings')} sx={{ borderRadius: 2, textTransform: 'none', borderColor: '#4f46e5', color: '#4f46e5', '&:hover': { borderColor: '#4338ca', bgcolor: 'rgba(79, 70, 229, 0.08)' } }}>
                                 Settings
                             </Button>
@@ -343,7 +345,8 @@ export const DashboardPage = () => {
                     overflow: 'hidden',
                     display: 'flex',
                     flexDirection: 'column',
-                    borderLeft: '1px solid #ddd',
+                    borderLeft: '1px solid',
+                    borderColor: 'divider',
                     position: 'relative',
                     height: '100%'
                 }}

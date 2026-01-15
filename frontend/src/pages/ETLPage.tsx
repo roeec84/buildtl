@@ -337,15 +337,7 @@ export default function ETLPage() {
         try {
             let pipelineId = currentPipelineId;
 
-            // If not saved, create ad-hoc or save it?
-            // User requested "Save" functionality separately.
-            // For now, if currentPipelineId exists, we run that.
-            // If not, we SHOULD save it first? Or create ad-hoc?
-            // Existing logic created ad-hoc.
-            // Let's encourage saving, but support ad-hoc.
-
             if (!pipelineId) {
-                // Ad-hoc run (matches previous behavior but maybe we should auto-save?)
                 const pipelineData = {
                     name: `Ad-hoc Run ${new Date().toLocaleString()}`,
                     description: "Ad-hoc execution",
@@ -355,8 +347,6 @@ export default function ETLPage() {
                 const created = await etlApi.createPipeline(pipelineData);
                 pipelineId = created.id;
             } else {
-                // Ensure current state is saved before running?
-                // Or assume user saved? Let's auto-save for convenience.
                 await etlApi.updatePipeline(pipelineId, {
                     name: pipelineName,
                     description: "Updated before run",
@@ -454,11 +444,29 @@ export default function ETLPage() {
         }
     };
 
+    // Load Last Pipeline on Mount
+    React.useEffect(() => {
+        const lastId = localStorage.getItem('lastPipelineId');
+        if (lastId && pipelines.length > 0) {
+            const pipeline = pipelines.find(p => p.id === Number(lastId));
+            if (pipeline) {
+                handleLoadPipeline(pipeline);
+            }
+        }
+    }, [pipelines]);
+
+    // Save Last Pipeline ID
+    React.useEffect(() => {
+        if (currentPipelineId) {
+            localStorage.setItem('lastPipelineId', currentPipelineId.toString());
+        }
+    }, [currentPipelineId]);
+
     return (
         <ReactFlowProvider>
             <div className="h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white flex flex-col transition-colors duration-300">
                 {/* Header */}
-                <div className="h-16 border-b border-slate-200 dark:border-white/10 flex items-center justify-between px-6 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md z-10 transition-colors duration-300">
+                <div className="relative h-16 border-b border-slate-200 dark:border-white/10 flex items-center justify-between px-6 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md z-50 transition-colors duration-300">
                     <div className="flex items-center gap-4">
                         <button
                             onClick={() => navigate('/')}
@@ -484,7 +492,6 @@ export default function ETLPage() {
                     </div>
 
                     <div className="flex items-center gap-4">
-                        <ThemeToggle />
 
                         {/* Model Selector */}
                         <div className="flex items-center gap-2 px-3 py-1.5 bg-white/50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-white/10">
