@@ -77,8 +77,7 @@ async def upload_file(
             for i in range(len(chunks))
         ]
 
-        # Add documents to vector store
-        doc_ids = await vector_store.add_documents(
+        await vector_store.add_documents(
             texts=chunks,
             metadatas=metadatas
         )

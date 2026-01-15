@@ -8,28 +8,34 @@
 
 @layer utilities {
   .glass-panel {
-    @apply backdrop-blur-xl bg-slate-900/60 border border-white/10 shadow-2xl ring-1 ring-white/5;
+    @apply backdrop-blur-2xl bg-white/70 dark:bg-slate-900/60 border border-white/20 dark:border-white/10 shadow-2xl ring-1 ring-black/5 dark:ring-white/5;
   }
 
   .glass-card {
-    @apply backdrop-blur-md bg-slate-800/40 border border-white/10 shadow-lg hover:bg-slate-800/60 transition-all duration-300;
+    @apply backdrop-blur-xl bg-white/60 dark:bg-slate-800/40 border border-white/30 dark:border-white/10 shadow-lg hover:shadow-xl hover:bg-white/70 dark:hover:bg-slate-800/60 transition-all duration-300;
   }
 
   .glass-input {
-    @apply bg-slate-950/50 border-white/10 text-slate-100 placeholder:text-slate-400 focus:bg-slate-950/80 focus:ring-2 focus:ring-indigo-500/50 transition-all backdrop-blur-sm shadow-inner;
+    @apply bg-white/50 dark:bg-slate-950/50 border border-slate-200 dark:border-white/10 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:bg-white/80 dark:focus:bg-slate-950/80 focus:ring-2 focus:ring-indigo-500/50 transition-all backdrop-blur-md shadow-inner rounded-xl;
   }
 
   .mesh-gradient {
-    background-color: #0f172a;
+    /* Subtle slate mesh for light mode */
+    background-color: #f8fafc;
+    /* slate-50 */
     background-image:
-      radial-gradient(at 0% 0%, hsla(253, 16%, 7%, 1) 0, transparent 50%),
-      radial-gradient(at 50% 0%, hsla(225, 39%, 30%, 1) 0, transparent 50%),
-      radial-gradient(at 100% 0%, hsla(339, 49%, 30%, 1) 0, transparent 50%);
-    background-size: 100% 100%;
-    /* Subtle pulsing animation could be added here if desired, keeping it static but deep for now per 'friendly dark' request */
+      radial-gradient(at 0% 0%, hsla(226, 70%, 55%, 0.15) 0, transparent 50%),
+      radial-gradient(at 100% 0%, hsla(262, 83%, 58%, 0.15) 0, transparent 50%);
   }
 
-  /* Adding a subtle animated grain or sheen could be nice, but sticking to clean dark glass for now */
+  .dark .mesh-gradient {
+    /* Subtle dark slate mesh for dark mode */
+    background-color: #020617;
+    /* slate-950 */
+    background-image:
+      radial-gradient(at 0% 0%, hsla(226, 70%, 55%, 0.2) 0, transparent 50%),
+      radial-gradient(at 100% 0%, hsla(262, 83%, 58%, 0.2) 0, transparent 50%);
+  }
 }
 
 * {
@@ -38,10 +44,26 @@
 
 body {
   margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  @apply text-slate-100;
+  @apply text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-950 transition-colors duration-300;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 dark:bg-slate-700 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400 dark:bg-slate-600;
 }

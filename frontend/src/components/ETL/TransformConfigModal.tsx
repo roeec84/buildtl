@@ -134,17 +134,17 @@ export const TransformConfigModal: React.FC<TransformConfigModalProps> = ({
         <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[200] p-4">
             <div className="glass-panel w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-2xl animate-in zoom-in-95">
                 {/* Header */}
-                <div className="sticky top-0 glass-panel border-b border-white/10 p-6 flex items-center justify-between">
+                <div className="sticky top-0 glass-panel border-b border-slate-200 dark:border-white/10 p-6 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <Wand2 className="w-6 h-6 text-purple-400" />
-                        <h2 className="text-xl font-bold text-white">
+                        <Wand2 className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+                        <h2 className="text-xl font-bold text-slate-900 dark:text-white">
                             {step === 'prompt' && 'Configure Transformation'}
                             {step === 'preview' && 'Preview Results'}
                         </h2>
                     </div>
                     <button
                         onClick={onClose}
-                        className="p-2 hover:bg-white/10 rounded-lg transition-colors text-slate-400 hover:text-white"
+                        className="p-2 hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg transition-colors text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
                     >
                         <X className="w-5 h-5" />
                     </button>
@@ -156,7 +156,7 @@ export const TransformConfigModal: React.FC<TransformConfigModalProps> = ({
                         <div className="space-y-6">
                             {/* Source Info */}
                             <div className="space-y-2">
-                                <div className="text-sm font-medium text-slate-300">Available Source Tables:</div>
+                                <div className="text-sm font-medium text-slate-700 dark:text-slate-300">Available Source Tables:</div>
                                 {upstreamNodes && upstreamNodes.length > 0 ? (
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                         {upstreamNodes.map((node, idx) => (
@@ -164,18 +164,18 @@ export const TransformConfigModal: React.FC<TransformConfigModalProps> = ({
                                                 <div className="absolute top-0 right-0 p-2 opacity-50 text-[10px] text-indigo-400 font-mono">
                                                     {node.label}
                                                 </div>
-                                                <div className="text-sm text-slate-300 mb-1">Table Name</div>
-                                                <div className="font-medium text-white truncate" title={node.tableName || 'Unconfigured'}>
+                                                <div className="text-sm text-slate-600 dark:text-slate-300 mb-1">Table Name</div>
+                                                <div className="font-medium text-slate-900 dark:text-white truncate" title={node.tableName || 'Unconfigured'}>
                                                     {node.tableName || 'Unconfigured'}
                                                 </div>
-                                                <div className="text-xs text-slate-400 mt-2">
+                                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">
                                                     {node.selectedColumns?.length || 0} columns selected
                                                 </div>
                                             </div>
                                         ))}
                                     </div>
                                 ) : (
-                                    <div className="p-4 border border-dashed border-slate-600 rounded-xl text-center text-slate-500 text-sm">
+                                    <div className="p-4 border border-dashed border-slate-300 dark:border-slate-600 rounded-xl text-center text-slate-500 text-sm">
                                         No source nodes connected yet.
                                     </div>
                                 )}
@@ -183,7 +183,7 @@ export const TransformConfigModal: React.FC<TransformConfigModalProps> = ({
 
                             {/* Transformation Prompt */}
                             <div>
-                                <label className="block text-sm font-medium text-slate-200 mb-2">
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
                                     Describe your transformation
                                 </label>
                                 <textarea
@@ -196,13 +196,13 @@ export const TransformConfigModal: React.FC<TransformConfigModalProps> = ({
 
                             {/* Example Prompts */}
                             <div>
-                                <div className="text-sm font-medium text-slate-300 mb-2">Examples:</div>
+                                <div className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Examples:</div>
                                 <div className="flex flex-wrap gap-2">
                                     {EXAMPLE_PROMPTS.map((example, idx) => (
                                         <button
                                             key={idx}
                                             onClick={() => setPrompt(example)}
-                                            className="px-3 py-1.5 text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors text-slate-300 hover:text-white"
+                                            className="px-3 py-1.5 text-xs bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 border border-slate-200 dark:border-white/10 rounded-lg transition-colors text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
                                         >
                                             {example}
                                         </button>
@@ -236,19 +236,19 @@ export const TransformConfigModal: React.FC<TransformConfigModalProps> = ({
                             <div className="flex items-center justify-between">
                                 <button
                                     onClick={handleBack}
-                                    className="flex items-center gap-2 px-4 py-2 text-sm bg-white/5 hover:bg-white/10 rounded-lg transition-colors text-slate-300 hover:text-white"
+                                    className="flex items-center gap-2 px-4 py-2 text-sm bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 rounded-lg transition-colors text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
                                 >
                                     <ArrowLeft className="w-4 h-4" />
                                     Edit Prompt
                                 </button>
 
                                 {/* Tabs */}
-                                <div className="flex bg-white/5 p-1 rounded-lg">
+                                <div className="flex bg-slate-100 dark:bg-white/5 p-1 rounded-lg">
                                     <button
                                         onClick={() => setPreviewTab('data')}
                                         className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${previewTab === 'data'
-                                            ? 'bg-purple-500 text-white shadow-lg'
-                                            : 'text-slate-400 hover:text-white'
+                                            ? 'bg-purple-600 text-white shadow-lg'
+                                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                                             }`}
                                     >
                                         <div className="flex items-center gap-2">
@@ -259,8 +259,8 @@ export const TransformConfigModal: React.FC<TransformConfigModalProps> = ({
                                     <button
                                         onClick={() => setPreviewTab('code')}
                                         className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${previewTab === 'code'
-                                            ? 'bg-purple-500 text-white shadow-lg'
-                                            : 'text-slate-400 hover:text-white'
+                                            ? 'bg-purple-600 text-white shadow-lg'
+                                            : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                                             }`}
                                     >
                                         <div className="flex items-center gap-2">
@@ -275,33 +275,33 @@ export const TransformConfigModal: React.FC<TransformConfigModalProps> = ({
                             {previewTab === 'data' && (
                                 <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                                     <div className="flex items-center gap-2 mb-3">
-                                        <Table className="w-5 h-5 text-blue-400" />
-                                        <h3 className="text-lg font-semibold text-white">
+                                        <Table className="w-5 h-5 text-blue-500 dark:text-blue-400" />
+                                        <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
                                             Data Preview ({previewData.row_count} rows)
                                         </h3>
                                     </div>
-                                    <div className="rounded-xl overflow-hidden border border-white/10">
+                                    <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-white/10">
                                         <div className="overflow-x-auto max-h-[500px]">
                                             <table className="w-full text-sm">
-                                                <thead className="sticky top-0 bg-slate-800 border-b border-white/10 text-xs uppercase tracking-wider">
+                                                <thead className="sticky top-0 bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-white/10 text-xs uppercase tracking-wider">
                                                     <tr>
                                                         {previewData.columns.map((col, idx) => (
                                                             <th
                                                                 key={idx}
-                                                                className="px-4 py-3 text-left font-medium text-slate-300 whitespace-nowrap bg-slate-800"
+                                                                className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap bg-slate-100 dark:bg-slate-800"
                                                             >
                                                                 {col}
                                                             </th>
                                                         ))}
                                                     </tr>
                                                 </thead>
-                                                <tbody className="divide-y divide-white/5 bg-slate-900/30">
+                                                <tbody className="divide-y divide-slate-100 dark:divide-white/5 bg-white dark:bg-slate-900/30">
                                                     {previewData.data.map((row, rowIdx) => (
-                                                        <tr key={rowIdx} className="hover:bg-white/5 transition-colors">
+                                                        <tr key={rowIdx} className="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
                                                             {row.map((cell, cellIdx) => (
                                                                 <td
                                                                     key={cellIdx}
-                                                                    className="px-4 py-3 text-slate-300 whitespace-nowrap"
+                                                                    className="px-4 py-3 text-slate-600 dark:text-slate-300 whitespace-nowrap"
                                                                 >
                                                                     {cell === null ? (
                                                                         <span className="text-slate-500 italic">null</span>
@@ -323,8 +323,8 @@ export const TransformConfigModal: React.FC<TransformConfigModalProps> = ({
                             {previewTab === 'code' && (
                                 <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                                     <div className="flex items-center gap-2 mb-3">
-                                        <Code className="w-5 h-5 text-green-400" />
-                                        <h3 className="text-lg font-semibold text-white">Generated PySpark Code</h3>
+                                        <Code className="w-5 h-5 text-green-500 dark:text-green-400" />
+                                        <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Generated PySpark Code</h3>
                                     </div>
                                     <div className="rounded-xl overflow-hidden border border-white/10 bg-[#1e1e1e]">
                                         <SyntaxHighlighter

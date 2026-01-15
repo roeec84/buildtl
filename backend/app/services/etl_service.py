@@ -1,6 +1,7 @@
 import os
 import sys
 import requests
+from typing import List, Dict, Any, Optional, Tuple
 from pyspark.sql import SparkSession
 from app.core.config import settings
 
@@ -18,7 +19,6 @@ class ETLService:
                 os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
                 os.environ["no_proxy"] = "*"  # Fix for some macOS network issues
 
-            # Ensure correct python executable is used for workers and driver
             os.environ['PYSPARK_PYTHON'] = sys.executable
             os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
             
@@ -32,8 +32,8 @@ class ETLService:
             driver_path = cls._ensure_drivers()
             
             # Build session
-            # Note: In production, we might submit jobs to a cluster.
-            # Here we run local mode.
+            # Note: In production, i might submit jobs to a cluster.
+            # Here i run local mode.
             builder = SparkSession.builder \
                 .appName("ChatbotETL") \
                 .master("local[*]") \
@@ -168,7 +168,7 @@ class ETLService:
             table_id = datasource.table_name
             
             # Write credentials to temp file
-            # Note: In a real persistent scenario we might manage key files differently.
+            # Note: In a real persistent scenario i might manage key files differently.
             # Using tempfile here is safe enough for preview.
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
                 json.dump(json.loads(config['credentials_json']), f)
@@ -512,6 +512,96 @@ class ETLService:
             raise ValueError(f"Unsupported sink database type: {db_type}")
 
     @staticmethod
+    async def get_sqlalchemy_connection_string(datasource_id: int, db_session) -> str:
+        """
+        Get a SQLAlchemy connection string for a given datasource.
+        """
+        from sqlalchemy import select
+        from sqlalchemy.orm import joinedload
+        from app.models.etl import ETLDataSource
+        from app.core.security import decrypt_value
+        import json
+
+        # Fetch datasource
+        result = await db_session.execute(
+            select(ETLDataSource).options(joinedload(ETLDataSource.linked_service)).where(ETLDataSource.id == datasource_id)
+        )
+        datasource = result.scalar_one_or_none()
+        if not datasource:
+            raise ValueError(f"Datasource {datasource_id} not found")
+
+        ls = datasource.linked_service
+        if not ls:
+            raise ValueError("Linked Service not found for data source")
+
+        db_type = ls.service_type
+        config = ls.connection_config.copy()
+
+        # Decrypt sensitive fields
+        if 'password' in config:
+            config['password'] = decrypt_value(config['password'])
+        if 'credentials_json' in config:
+            config['credentials_json'] = decrypt_value(config['credentials_json'])
+
+        if db_type == 'postgresql':
+            return f"postgresql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
+        elif db_type == 'mysql':
+            return f"mysql+pymysql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
+        elif db_type == 'sql_server':
+            return f"mssql+pymysql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
+        elif db_type == 'bigquery':
+            import tempfile
+            
+            # Write credentials to a temp file
+            # We use a stable path based on datasource ID or a new temp file?
+            # Creating a new temp file each time might leak if not cleaned up, 
+            # but usually acceptable for this scale. 
+            # Ideally we'd cache the path but we're in a static method.
+            
+            try:
+                # Use a specific prefix to easily identify these files
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', prefix='bq_creds_', delete=False) as f:
+                    f.write(json.dumps(json.loads(config['credentials_json'])))
+                    credentials_path = f.name
+                    print(f"DEBUG: Written BigQuery credentials to {credentials_path}")
+                    
+                return f"bigquery://{config.get('project_id')}?credentials_path={credentials_path}"
+            except Exception as e:
+                print(f"Error handling BigQuery credentials: {e}")
+                # Fallback to default behavior (ADC) if this fails
+                return f"bigquery://{config.get('project_id')}"
+        else:
+            raise ValueError(f"Unsupported database type for SQL Agent: {db_type}")
+
+    @staticmethod
+    async def execute_sql_query(connection_string: str, query: str) -> List[Dict[str, Any]]:
+        """
+        Execute raw SQL query and return results as list of dicts.
+        """
+        import pandas as pd
+        from sqlalchemy import create_engine, text
+        from typing import List, Dict, Any
+        
+        # Helper to run synchronous SQL code in async wrapper if needed, 
+        # or just use pandas which is sync. For MVP, sync pandas is fine if not blocking main loop too much, 
+        # or wrap in run_in_executor.
+        
+        try:
+            # Create a localized engine/connection just for this query
+            # We use pandas for easy DF conversion
+            engine = create_engine(connection_string)
+            with engine.connect() as conn:
+                df = pd.read_sql(text(query), conn)
+                
+            # Convert to list of dicts (JSON serializable)
+            # Handle timestamps etc? Pandas to_dict('records') handles basics.
+            # Timestamp to string might be needed.
+            return df.astype(object).where(pd.notnull(df), None).to_dict('records')
+        except Exception as e:
+            print(f"Error executing SQL: {e}")
+            raise e
+
+    @staticmethod
     async def execute_pipeline(pipeline_id: int, db_session):
         """
         Execute an ETL pipeline with execution history tracking.
@@ -561,112 +651,9 @@ class ETLService:
             except nx.NetworkXUnfeasible:
                 raise ValueError("Pipeline has cycles!")
                 
-            # 3. Execute Nodes
-            # Store DataFrames in a dictionary keyed by Node ID
-            node_results = {}
-            
-            # Initialize Spark
+            # 3. Execute Nodes Recursively
             spark = ETLService.get_spark_session()
-            
-            for node_id in execution_order:
-                node = G.nodes[node_id]
-                node_type = node.get('type')
-                node_data = node.get('data', {})
-                
-                print(f"Executing node {node_id} ({node_type})...")
-                
-                if node_type == 'source':
-                    datasource_id = node_data.get('datasourceId')
-                    selected_columns = node_data.get('selectedColumns')
-                    
-                    # Fetch datasource
-                    ds_result = await db_session.execute(
-                        select(ETLDataSource).options(joinedload(ETLDataSource.linked_service)).where(ETLDataSource.id == datasource_id)
-                    )
-                    datasource = ds_result.scalar_one_or_none()
-                    if not datasource:
-                        raise ValueError(f"Datasource {datasource_id} not found")
-                        
-                    df = ETLService.load_source_data(datasource, selected_columns)
-                    node_results[node_id] = df
-                    
-                elif node_type == 'transform':
-                    generated_code = node_data.get('generatedCode')
-                    
-                    # Find upstream input DataFrame
-                    upstream_nodes = list(G.predecessors(node_id))
-                    if not upstream_nodes:
-                        raise ValueError(f"Transform node {node_id} has no input")
-                    
-                    # Prepare inputs for the transform function
-                    # We map table names (from source nodes) to DataFrames to match the AI generation context
-                    input_dfs = {}
-                    for uid in upstream_nodes:
-                        u_node = G.nodes[uid]
-                        # Use table name if available (Source nodes), otherwise fall back to label
-                        key = u_node['data'].get('tableName', u_node['data'].get('label', f"node_{uid}"))
-                        input_dfs[key] = node_results[uid]
-                    
-                    if not generated_code:
-                         raise ValueError(f"Transform node {node_id} has no generated code")
-                    
-                    # Execute transformation
-                    import pyspark.sql.functions as F
-                    import pyspark.sql.types as T
-                    
-                    exec_globals = globals().copy()
-                    exec_globals['F'] = F
-                    exec_globals['T'] = T
-                    
-                    local_vars = {}
-                    exec(generated_code, exec_globals, local_vars)
-                    transform_func = local_vars.get('transform')
-                    
-                    if not transform_func:
-                        raise ValueError(f"No 'transform' function found in generated code for node {node_id}")
-                    
-                    result_df = transform_func(spark, input_dfs)
-                    node_results[node_id] = result_df
-                    
-                elif node_type == 'sink':
-                    datasource_id = node_data.get('datasourceId')
-                    table_name = node_data.get('tableName')
-                    write_mode = node_data.get('writeMode', 'append')
-                    
-                    # Find upstream input
-                    upstream_nodes = list(G.predecessors(node_id))
-                    if not upstream_nodes:
-                        raise ValueError(f"Sink node {node_id} has no input")
-                        
-                    input_df = node_results[upstream_nodes[0]]
-                    
-                    # Fetch datasource
-                    ds_result = await db_session.execute(
-                        select(ETLDataSource).options(joinedload(ETLDataSource.linked_service)).where(ETLDataSource.id == datasource_id)
-                    )
-                    datasource = ds_result.scalar_one_or_none()
-                    if not datasource:
-                         raise ValueError(f"Sink Datasource {datasource_id} not found")
-                    
-                    # Write Data
-                    # For now only Postgres sink supported via JDBC
-                    # TODO: Abstract this based on Linked Service type
-                    if datasource.linked_service and datasource.linked_service.service_type == 'postgresql':
-                        db_config = datasource.linked_service.connection_config
-                        jdbc_url = f"jdbc:postgresql://{db_config['host']}:{db_config['port']}/{db_config['database']}"
-                        
-                        writer = input_df.write \
-                            .format("jdbc") \
-                            .option("url", jdbc_url) \
-                            .option("dbtable", table_name) \
-                            .option("user", db_config['user']) \
-                            .option("password", db_config['password']) \
-                            .option("driver", "org.postgresql.Driver") \
-                            .mode(write_mode)
-                            
-                        writer.save()
-                    else:
-                        print(f"Unsupported sink type: {datasource.linked_service.service_type if datasource.linked_service else 'None'}")
+            await ETLService._execute_graph_nodes(G, execution_order, spark, db_session)
                         
             # Mark Success
             execution.status = "completed"
@@ -690,6 +677,180 @@ class ETLService:
             await db_session.commit()
             
             raise e
+
+    @staticmethod
+    async def _execute_graph_nodes(G, execution_order, spark, db_session, initial_results=None):
+        """
+        Execute a set of nodes in a graph.
+        initial_results: dict mapping node_id -> DataFrame (for injecting inputs into child pipelines)
+        Returns a dict of node_id -> DataFrame
+        """
+        from sqlalchemy import select
+        from sqlalchemy.orm import joinedload
+        from app.models.etl import ETLDataSource, ETLPipeline
+        import networkx as nx
+        
+        node_results = initial_results.copy() if initial_results else {}
+        
+        for node_id in execution_order:
+            if node_id in node_results:
+                # Already computed/injected
+                continue
+                
+            node = G.nodes[node_id]
+            node_type = node.get('type')
+            node_data = node.get('data', {})
+            
+            print(f"Executing node {node_id} ({node_type})...")
+            
+            if node_type == 'source':
+                datasource_id = node_data.get('datasourceId')
+                selected_columns = node_data.get('selectedColumns')
+                
+                # Fetch datasource
+                ds_result = await db_session.execute(
+                    select(ETLDataSource).options(joinedload(ETLDataSource.linked_service)).where(ETLDataSource.id == datasource_id)
+                )
+                datasource = ds_result.scalar_one_or_none()
+                if not datasource:
+                    raise ValueError(f"Datasource {datasource_id} not found")
+                    
+                df = ETLService.load_source_data(datasource, selected_columns)
+                node_results[node_id] = df
+                
+            elif node_type == 'transform':
+                generated_code = node_data.get('generatedCode')
+                
+                # Find upstream input DataFrame
+                upstream_nodes = list(G.predecessors(node_id))
+                if not upstream_nodes:
+                    raise ValueError(f"Transform node {node_id} has no input")
+                
+                # Prepare inputs for the transform function
+                input_dfs = {}
+                for uid in upstream_nodes:
+                    u_node = G.nodes[uid]
+                    # Use table name if available (Source nodes), otherwise fall back to label
+                    key = u_node['data'].get('tableName', u_node['data'].get('label', f"node_{uid}"))
+                    input_dfs[key] = node_results[uid]
+                
+                if not generated_code:
+                        raise ValueError(f"Transform node {node_id} has no generated code")
+                
+                # Execute transformation
+                import pyspark.sql.functions as F
+                import pyspark.sql.types as T
+                
+                exec_globals = globals().copy()
+                exec_globals['F'] = F
+                exec_globals['T'] = T
+                
+                local_vars = {}
+                exec(generated_code, exec_globals, local_vars)
+                transform_func = local_vars.get('transform')
+                
+                if not transform_func:
+                    raise ValueError(f"No 'transform' function found in generated code for node {node_id}")
+                
+                result_df = transform_func(spark, input_dfs)
+                node_results[node_id] = result_df
+                
+            elif node_type == 'sink':
+                datasource_id = node_data.get('datasourceId')
+                table_name = node_data.get('tableName')
+                write_mode = node_data.get('writeMode', 'append')
+                
+                # Find upstream input
+                upstream_nodes = list(G.predecessors(node_id))
+                if not upstream_nodes:
+                    raise ValueError(f"Sink node {node_id} has no input")
+                    
+                input_df = node_results[upstream_nodes[0]]
+                
+                # Fetch datasource
+                ds_result = await db_session.execute(
+                    select(ETLDataSource).options(joinedload(ETLDataSource.linked_service)).where(ETLDataSource.id == datasource_id)
+                )
+                datasource = ds_result.scalar_one_or_none()
+                if not datasource:
+                        raise ValueError(f"Sink Datasource {datasource_id} not found")
+                
+                # Write Data
+                ETLService.write_sink_data(input_df, datasource, table_name, write_mode)
+                
+                # Sink returns input df for continuation if needed
+                node_results[node_id] = input_df
+            
+            elif node_type == 'pipeline':
+                child_pipeline_id = node_data.get('pipelineId')
+                if not child_pipeline_id:
+                    raise ValueError(f"Pipeline node {node_id} not configured")
+                    
+                # Find upstream input (from parent pipeline)
+                upstream_nodes = list(G.predecessors(node_id))
+                if not upstream_nodes:
+                    raise ValueError(f"Pipeline node {node_id} has no input")
+                
+                # Data to inject into the child pipeline
+                input_df = node_results[upstream_nodes[0]]
+                
+                # Load Child Pipeline
+                result = await db_session.execute(
+                    select(ETLPipeline).where(ETLPipeline.id == child_pipeline_id)
+                )
+                child_pipeline = result.scalar_one_or_none()
+                if not child_pipeline:
+                    raise ValueError(f"Child Pipeline {child_pipeline_id} not found")
+                
+                # Build Child Graph
+                ChildG = nx.DiGraph()
+                c_nodes = child_pipeline.nodes or []
+                c_edges = child_pipeline.edges or []
+                
+                for cn in c_nodes:
+                    ChildG.add_node(cn['id'], **cn)
+                for ce in c_edges:
+                    ChildG.add_edge(ce['source'], ce['target'])
+                
+                execution_order_child = list(nx.topological_sort(ChildG))
+                
+                # Identify Child Source Node (Injection Point)
+                # Assumption: Child pipeline has exactly one Source Node that we override.
+                # Or we look for the Source Node with NO predecessors in the child graph?
+                child_source_nodes = [n for n in execution_order_child if ChildG.nodes[n]['type'] == 'source']
+                
+                if not child_source_nodes:
+                     raise ValueError(f"Child pipeline {child_pipeline_id} has no source node to inject data into")
+                
+                # Inject data into the first source node found
+                target_source_id = child_source_nodes[0]
+                print(f"DEBUG: Injecting parent data into child node {target_source_id}")
+                
+                child_results = {
+                    target_source_id: input_df
+                }
+                
+                # Recursively Execute Child Graph
+                final_child_results = await ETLService._execute_graph_nodes(
+                    ChildG, execution_order_child, spark, db_session, initial_results=child_results
+                )
+                
+                # Determine Output of Child Pipeline
+                # We return the result of the LAST executed node in the child pipeline?
+                # Or find the node with NO successors (Leaf)?
+                leaf_nodes = [n for n in ChildG.nodes() if ChildG.out_degree(n) == 0]
+                
+                if not leaf_nodes:
+                    # Should be impossible if DAG is valid and not empty
+                     node_results[node_id] = input_df 
+                else:
+                    # Return result of the first leaf node. 
+                    # Prefer Sink or Transform result.
+                    # Note: If child pipeline ends in sink, we return data flowing TO sink (from write_sink_data logic above)
+                    output_node_id = leaf_nodes[0]
+                    node_results[node_id] = final_child_results[output_node_id]
+
+        return node_results
             
     @staticmethod
     async def generate_transformation_code(prompt: str, upstream_schemas: dict, model_name: str = "gpt-4o", api_key: str = None) -> str:
@@ -697,33 +858,17 @@ class ETLService:
         Generate PySpark transformation code using LLM.
         Supports dynamic model selection without heavyweight dependencies.
         """
-        from langchain_openai import ChatOpenAI
-        from langchain_anthropic import ChatAnthropic
+        from app.services.llm_models import LLMModelFactory
         from langchain_core.messages import SystemMessage, HumanMessage
-        from app.core.config import settings
 
         # Dynamically select model provider based on model_name
-        model_lower = model_name.lower()
-
-        if any(x in model_lower for x in ['gpt', 'openai']):
-            llm = ChatOpenAI(
-                model=model_name,
-                temperature=0.1,
-                api_key=api_key or settings.OPENAI_API_KEY
-            )
-        elif any(x in model_lower for x in ['claude', 'anthropic']):
-            llm = ChatAnthropic(
-                model=model_name,
-                temperature=0.1,
-                api_key=api_key or settings.ANTHROPIC_API_KEY
-            )
-        else:
-            # Fallback to GPT-4o if unknown or default
-            llm = ChatOpenAI(
-                model="gpt-4o",
-                temperature=0.1,
-                api_key=api_key or settings.OPENAI_API_KEY
-            )
+        factory = LLMModelFactory()
+        llm = factory.create_llm(
+            model_name=model_name,
+            temperature=0.1,
+            max_tokens=2000, # Default higher token limit for code generation
+            api_key=api_key
+        )
         
         # Format schema description for multiple tables
         schema_lines = []

@@ -3,15 +3,15 @@ LLM Service - Integrates with OpenAI, Anthropic, and other LLM providers using L
 Handles message history, conversation context, and model selection.
 """
 from typing import List, Dict, Any, Optional, Tuple
-from langchain_openai import ChatOpenAI
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_community.tools import DuckDuckGoSearchRun
-from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
+from langchain_community.utilities import SQLDatabase
+from langchain_community.agent_toolkits import create_sql_agent
 from langchain_core.tools import Tool
 from app.core.config import settings
 from app.models.message import Message as DBMessage
+from app.schemas.chart import ChartConfig
+from app.services.llm_models import LLMModelFactory
 
 
 class LLMService:
@@ -31,20 +31,24 @@ class LLMService:
         Initialize LLM service with specified model.
 
         Args:
-            model_name: Name of the model (e.g., 'gpt-4', 'claude-3-opus')
-            api_key: Optional API key (falls back to settings)
-            temperature: Model temperature (0-1, controls randomness)
+            model_name: Name of the model
+            api_key: Optional API key
+            temperature: Model temperature
             max_tokens: Maximum tokens in response
         """
         self.model_name = model_name
         self.temperature = temperature
         self.max_tokens = max_tokens
+        
+        # Initialize Strategy Factory
+        self.model_factory = LLMModelFactory()
+        
         self.llm = self._initialize_model(model_name, api_key)
         self.tools = self._initialize_tools()
 
     def _initialize_model(self, model_name: str, api_key: Optional[str] = None):
         """
-        Initialize the appropriate LangChain model based on model name.
+        Initialize the appropriate LangChain model using the Strategy Pattern.
 
         Args:
             model_name: Name of the model
@@ -52,32 +56,13 @@ class LLMService:
 
         Returns:
             Initialized LangChain chat model
-
-        Raises:
-            ValueError: If model is not supported
         """
-        model_lower = model_name.lower()
-
-        # OpenAI models
-        if any(x in model_lower for x in ['gpt-4', 'gpt-3.5', 'gpt4', 'gpt3']):
-            return ChatOpenAI(
-                model=model_name,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                api_key=api_key or settings.OPENAI_API_KEY
-            )
-
-        # Anthropic Claude models
-        elif any(x in model_lower for x in ['claude', 'anthropic']):
-            return ChatAnthropic(
-                model=model_name,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                api_key=api_key or settings.ANTHROPIC_API_KEY
-            )
-
-        else:
-            raise ValueError(f"Unsupported model: {model_name}")
+        return self.model_factory.create_llm(
+            model_name=model_name,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            api_key=api_key
+        )
 
     def _extract_text_content(self, content: Any) -> str:
         """
@@ -110,18 +95,9 @@ class LLMService:
         Returns:
             List of available tools
         """
-        # Web search tool
-        search = DuckDuckGoSearchRun()
-
-        tools = [
-            Tool(
-                name="web_search",
-                description="Search the web for current information, news, facts, and real-time data. Use this when you need up-to-date information or when asked about current events, today's date, recent news, or any information you don't have in your training data.",
-                func=search.run,
-            )
-        ]
-
-        return tools
+        # Only returning empty list for now as SQL tools are handled separately in generate_response_with_sql_agent.
+        # If i need other tools later, i can add them here.
+        return []
 
     def _convert_db_messages_to_langchain(
         self,
@@ -289,6 +265,204 @@ Answer the question based on the context above."""
             conversation_history,
             system_prompt
         )
+
+    async def generate_response_with_sql_agent(
+        self,
+        user_message: str,
+        connection_string: str,
+        conversation_history: Optional[List[DBMessage]] = None
+    ) -> Tuple[str, List[Dict[str, str]]]:
+        """
+        Generate a response using the LangChain SQL Agent.
+
+        Args:
+            user_message: The user's query
+            connection_string: SQLAlchemy connection string for the database
+            conversation_history: Optional list of previous messages
+
+        Returns:
+            Tuple of (AI response, full conversation history)
+        """
+        try:
+            print(f"DEBUG: Initializing SQL Agent...")
+            # Initialize SQL Database
+            db = SQLDatabase.from_uri(connection_string)
+            print(f"DEBUG: SQL Database initialized. Dialect: {db.dialect}, Tables: {db.get_usable_table_names()}")
+
+            # Create SQL Agent
+            agent_executor = create_sql_agent(
+                llm=self.llm,
+                db=db,
+                agent_type="openai-tools",
+                verbose=True
+            )
+
+            # Format history for context
+            full_prompt = user_message
+            if conversation_history:
+                 # Provide last few messages as context
+                 history_text = "\n".join([f"{msg.type}: {msg.content}" for msg in conversation_history[-4:]])
+                 full_prompt = f"Previous conversation:\n{history_text}\n\nCurrent User Query: {user_message}"
+
+            print(f"DEBUG: Invoking SQL Agent with prompt: {full_prompt}")
+            # Execute Agent
+            response = await agent_executor.ainvoke({"input": full_prompt})
+            print(f"DEBUG: SQL Agent Response: {response}")
+            response_content = response.get("output", "I could not generate an answer from the database.")
+            
+            # Re-convert existing history
+            messages = []
+            if conversation_history:
+                messages = self._convert_db_messages_to_langchain(conversation_history)
+            
+            messages.append(HumanMessage(content=user_message))
+            messages.append(AIMessage(content=response_content))
+            
+            formatted_history = self._format_message_history(messages)
+
+            return response_content, formatted_history
+
+        except Exception as e:
+            error_msg = f"SQL Agent Error: {str(e)}"
+            print(error_msg)
+            return error_msg, []
+
+    async def generate_chart_config(
+        self,
+        user_message: str,
+        data_sample: List[Dict[str, Any]],
+        columns: List[str],
+        previous_config: Optional[Dict[str, Any]] = None
+    ) -> ChartConfig:
+        """
+        Generate a chart configuration based on the user's request and data sample.
+
+        Args:
+            user_message: The user's query description
+            data_sample: A sample of the data (rows)
+            columns: List of column names
+            previous_config: Optional previous configuration to refine
+
+        Returns:
+            ChartConfig object
+        """
+        refinement_context = ""
+        if previous_config:
+            import json
+            config_str = json.dumps(previous_config, indent=2)
+            refinement_context = f"""
+- Previous Configuration:
+{config_str}
+
+Refinement Mode:
+The user wants to MODIFY the previous chart.
+1. Use the 'Previous Configuration' as your baseline.
+2. Apply the changes requested in user_message.
+3. Keep other settings (colors, titles) if they are still relevant.
+4. If the user asks to change the data/metric, update the 'series' and 'xAxis' accordingly.
+"""
+        else:
+            refinement_context = """
+Rules:
+1. Choose 'bar', 'line', 'pie', or 'scatter' appropriate for the data.
+2. Map 'series' and 'xAxis' correctly.
+3. For Bar/Line charts: 'xAxis' usually contains the labels/categories (scaleType='band' for categories, 'point' for time/linear).
+4. `series` data MUST be extracted from the provided `data_sample`.
+5. Return a valid JSON matching the ChartConfig schema.
+"""
+
+        system_msg_template = """You are an expert Data Visualization Architect using MUI X Charts.
+Your goal is to choose the best chart type to visualize the provided data based on the user's request.
+Internalize the data structure and schema.
+
+Input Context:
+- Columns: {columns}
+- Data Sample (first 5 rows): {data_sample}
+
+{refinement_context}
+"""
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_msg_template),
+            ("human", "{user_message}"),
+        ])
+
+        chain = prompt | self.llm.with_structured_output(ChartConfig)
+        
+        try:
+            safe_sample = data_sample[:5]
+            
+            result = await chain.ainvoke({
+                "columns": columns,
+                "data_sample": safe_sample,
+                "user_message": user_message,
+                "refinement_context": refinement_context
+            })
+            
+            
+            
+            
+            
+            
+            return result
+        except Exception as e:
+            print(f"Error generating chart config: {e}")
+            # Fallback or re-raise
+            raise e
+
+    async def generate_sql_query(
+        self,
+        user_message: str,
+        connection_string: str
+    ) -> str:
+        """
+        Generate SQL query from natural language.
+        
+        Args:
+            user_message: User's request
+            connection_string: DB Connection string
+            
+        Returns:
+            SQL Query string
+        """
+        try:
+            db = SQLDatabase.from_uri(connection_string)
+            schema = db.get_table_info()
+            dialect = db.dialect
+            
+            prompt = f"""You are an expert SQL Data Analyst.
+Target Database Dialect: {dialect}
+
+Schema:
+{schema}
+
+User Request: {user_message}
+
+Return ONLY the SQL query to answer the request.
+Do not wrap it in markdown block.
+Do not include explanations.
+If you use markdown, I will strip it, but prefer raw text.
+"""
+            
+            response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+            sql = response.content.strip()
+            
+            # Clean up SQL (sometimes markdown blocks are included)
+            if sql.startswith("```sql"):
+                sql = sql[6:]
+            if sql.startswith("```"):
+                sql = sql[3:]
+            if sql.endswith("```"):
+                sql = sql[:-3]
+            
+            # Handle "Question: ... SQLQuery: ..." format often returned by Chat models in chains
+            if "SQLQuery:" in sql:
+                sql = sql.split("SQLQuery:")[1]
+            
+            return sql.strip()
+        except Exception as e:
+            print(f"Error generating SQL: {e}")
+            raise e
 
 
 class LLMFactory:

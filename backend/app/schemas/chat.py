@@ -3,7 +3,8 @@ Pydantic schemas for chat requests and responses.
 """
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+from app.schemas.chart import ChartConfig
 
 
 class MessageCreate(BaseModel):
@@ -50,6 +51,7 @@ class ConversationResponse(BaseModel):
     id: int
     chat_id: str
     title: str
+    dashboard_id: Optional[int] = None
     history: List[ChatMessageHistory]
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -60,6 +62,21 @@ class ConversationResponse(BaseModel):
     }
 
 
+
 class ConversationListResponse(BaseModel):
     """Response schema for list of conversations"""
     conversations: List[ConversationResponse]
+
+
+class BuilderRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+    dataSourceId: int
+    dashboardId: Optional[int] = None
+    model: str = "gpt-4-turbo-preview"
+    chartContext: Optional[Dict[str, Any]] = None # Explicit context for refinement
+
+class BuilderResponse(BaseModel):
+    message: str
+    chartConfig: Optional[ChartConfig] = None
+    error: bool = False
+

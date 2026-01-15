@@ -15,11 +15,16 @@ from app.schemas.chat import (
     ChatRequest,
     ChatResponse,
     ConversationResponse,
-    ChatMessageHistory
+    ChatMessageHistory,
+    BuilderRequest,
+    BuilderResponse
 )
 from app.api.deps import get_current_active_user
 from app.services.llm_service import LLMService
 from app.services.vector_store_service import VectorStoreFactory
+from app.models.etl import ETLDataSource
+from app.services.etl_service import ETLService
+from sqlalchemy.orm import joinedload
 
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
@@ -103,27 +108,66 @@ async def send_message(
 
         # Check if using RAG with vector store
         if request.dataSource and request.dataSource != "default":
-            # Normalize data source name by removing spaces (matches vector_store_service.py logic)
-            normalized_data_source = request.dataSource.replace(" ", "")
-
-            # Create vector store for retrieval
-            vector_store = VectorStoreFactory.create_for_user(
-                user_id=current_user.id,
-                collection_name=normalized_data_source
+            # 1. Check if it's an SQL Data Source
+            print(f"DEBUG: Checking for SQL DataSource: '{request.dataSource}'")
+            result = await db.execute(
+                select(ETLDataSource)
+                .options(joinedload(ETLDataSource.linked_service))
+                .where(ETLDataSource.name == request.dataSource)
             )
+            datasource = result.scalar_one_or_none()
+            
+            # List of SQL types supported by our agent
+            sql_types = ['postgresql', 'mysql', 'sql_server', 'azure_sql', 'bigquery']
+            
+            if datasource:
+                 print(f"DEBUG: Found DataSource: {datasource.name}, Service Type: {datasource.linked_service.service_type if datasource.linked_service else 'None'}")
 
-            # Retrieve relevant documents
-            documents = await vector_store.similarity_search(
-                query=request.message,
-                k=4
-            )
+            if datasource and datasource.linked_service and datasource.linked_service.service_type in sql_types:
+                # Use SQL Agent
+                print(f"DEBUG: Using SQL Agent for {datasource.name}")
+                try:
+                    conn_string = await ETLService.get_sqlalchemy_connection_string(datasource.id, db)
+                    # Mask password for logs
+                    masked_conn = conn_string.replace(conn_string.split(':')[2].split('@')[0], '******') if '@' in conn_string else conn_string
+                    print(f"DEBUG: Connection String: {masked_conn}")
+                    
+                    response_content, formatted_history = await llm_service.generate_response_with_sql_agent(
+                        user_message=request.message,
+                        connection_string=conn_string,
+                        conversation_history=message_history
+                    )
+                except Exception as e:
+                    print(f"SQL Agent failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                        detail=f"Failed to query database: {str(e)}"
+                    )
+            else:
+                print(f"DEBUG: Fallback to RAG for {request.dataSource}")
+                # Normalize data source name by removing spaces (matches vector_store_service.py logic)
+                normalized_data_source = request.dataSource.replace(" ", "")
 
-            # Generate response with RAG
-            response_content, formatted_history = await llm_service.generate_response_with_rag(
-                user_message=request.message,
-                context_documents=[doc.page_content for doc in documents],
-                conversation_history=message_history
-            )
+                # Create vector store for retrieval
+                vector_store = VectorStoreFactory.create_for_user(
+                    user_id=current_user.id,
+                    collection_name=normalized_data_source
+                )
+
+                # Retrieve relevant documents
+                documents = await vector_store.similarity_search(
+                    query=request.message,
+                    k=4
+                )
+
+                # Generate response with RAG
+                response_content, formatted_history = await llm_service.generate_response_with_rag(
+                    user_message=request.message,
+                    context_documents=[doc.page_content for doc in documents],
+                    conversation_history=message_history
+                )
         else:
             # Generate response without RAG
             response_content, formatted_history = await llm_service.generate_response(
@@ -207,19 +251,25 @@ async def get_conversations(
         messages = result.scalars().all()
 
         # Format message history
-        history = [
-            ChatMessageHistory(
-                type=msg.type.value,
-                data={"content": msg.content}
+        history = []
+        for msg in messages:
+            msg_data = {"content": msg.content}
+            if msg.metadata_json:
+                msg_data.update(msg.metadata_json)
+                
+            history.append(
+                ChatMessageHistory(
+                    type=msg.type.value,
+                    data=msg_data
+                )
             )
-            for msg in messages
-        ]
 
         response.append(
             ConversationResponse(
                 id=conv.id,
                 chat_id=conv.chat_id,
                 title=conv.title,
+                dashboard_id=conv.dashboard_id,
                 history=history,
                 created_at=conv.created_at,
                 updated_at=conv.updated_at
@@ -265,3 +315,152 @@ async def delete_conversation(
     await db.commit()
 
     return {"message": "Conversation deleted successfully"}
+
+
+@router.post("/builder", response_model=BuilderResponse)
+async def generate_chart(
+    request: BuilderRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate a chart configuration from natural language using a specific data source.
+    Uses LangGraph for stateful execution (Router -> SQL -> Chart).
+    """
+    try:
+        from app.services.graph_service import graph
+        from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+        
+        conversation = None
+        if request.dashboardId:
+            stmt = select(Conversation).where(
+                Conversation.dashboard_id == request.dashboardId,
+                Conversation.user_id == current_user.id
+            )
+            result = await db.execute(stmt)
+            conversation = result.scalars().first()
+            
+            if not conversation:
+                conversation = Conversation(
+                    chat_id=str(uuid.uuid4()),
+                    user_id=current_user.id,
+                    dashboard_id=request.dashboardId,
+                    title="Dashboard Chat"
+                )
+                db.add(conversation)
+                await db.commit()
+                await db.refresh(conversation)
+
+            user_msg = Message(
+                conversation_id=conversation.id,
+                type=MessageType.HUMAN,
+                content=request.message
+            )
+            db.add(user_msg)
+            await db.commit()
+
+        conn_string = await ETLService.get_sqlalchemy_connection_string(request.dataSourceId, db)
+
+        result = await db.execute(
+            select(ModelSetting)
+            .where(ModelSetting.user_id == current_user.id)
+            .where(ModelSetting.name == request.model)
+        )
+        model_setting = result.scalar_one_or_none()
+        
+        if model_setting:
+            llm_service = LLMService(
+                model_name=model_setting.name,
+                api_key=model_setting.api_key,
+                temperature=0.1 
+            )
+        else:
+            llm_service = LLMService(model_name=request.model, temperature=0.1)
+
+        previous_messages = []
+        last_chart_config = None
+        last_query_result = None
+        
+        if conversation:
+            result = await db.execute(
+                 select(Message)
+                 .where(Message.conversation_id == conversation.id)
+                 .order_by(Message.id.desc())
+                 .limit(5)
+            )
+            history_msgs = result.scalars().all()[::-1]
+            
+            for msg in history_msgs:
+                if msg.type == MessageType.HUMAN:
+                    previous_messages.append(HumanMessage(content=msg.content))
+                elif msg.type == MessageType.AI:
+                    previous_messages.append(AIMessage(content=msg.content))
+                    if msg.metadata_json and "chartConfig" in msg.metadata_json:
+                        last_chart_config = msg.metadata_json["chartConfig"]
+                        if "dataset" in last_chart_config:
+                            last_query_result = last_chart_config["dataset"]
+        
+        if request.chartContext:
+            last_chart_config = request.chartContext
+            if "dataset" in request.chartContext:
+                last_query_result = request.chartContext["dataset"]
+        
+        initial_state = {
+            "messages": previous_messages + [HumanMessage(content=request.message)],
+            "user_id": str(current_user.id),
+            "dashboard_id": request.dashboardId,
+            "connection_string": conn_string,
+            "retry_count": 0,
+            "llm_service": llm_service,
+            "chart_config": last_chart_config,
+            "query_result": last_query_result
+        }
+        
+        final_state = await graph.ainvoke(initial_state)
+        
+        if final_state.get("error") and not final_state.get("chart_config"):
+             response_msg = f"I encountered an error: {final_state['error']}"
+             return BuilderResponse(message=response_msg, error=True)
+
+        chart_config = final_state.get("chart_config")
+        chart_dataset = final_state.get("query_result")
+        
+        last_msg = final_state["messages"][-1]
+        response_text = last_msg.content
+        
+        config_obj = None
+        if chart_config:
+            from app.schemas.chart import ChartConfig
+            
+            config_obj = ChartConfig(**chart_config)
+            if chart_dataset:
+                config_obj.dataset = chart_dataset
+
+        if conversation:
+            ai_msg_content = response_text
+            meta = {}
+            if config_obj:
+                meta = {"chartConfig": config_obj.model_dump(mode='json')}
+            
+            ai_msg = Message(
+                conversation_id=conversation.id,
+                type=MessageType.AI,
+                content=ai_msg_content,
+                metadata_json=meta
+            )
+            db.add(ai_msg)
+            await db.commit()
+
+        return BuilderResponse(
+            message=response_text,
+            chartConfig=config_obj
+        )
+
+    except Exception as e:
+        print(f"Builder error: {e}")
+        import traceback
+        traceback.print_exc()
+        return BuilderResponse(
+            message=f"An error occurred: {str(e)}",
+            error=True
+        )

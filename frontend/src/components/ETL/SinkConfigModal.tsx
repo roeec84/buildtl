@@ -132,14 +132,14 @@ export const SinkConfigModal: React.FC<SinkConfigModalProps> = ({
         <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[200] p-4">
             <div className="glass-panel w-full max-w-lg rounded-2xl animate-in zoom-in-95">
                 {/* Header */}
-                <div className="border-b border-white/10 p-6 flex items-center justify-between">
+                <div className="border-b border-slate-200 dark:border-white/10 p-6 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <Database className="w-6 h-6 text-pink-400" />
-                        <h2 className="text-xl font-bold text-white">Configure Sink (Destination)</h2>
+                        <Database className="w-6 h-6 text-pink-500 dark:text-pink-400" />
+                        <h2 className="text-xl font-bold text-slate-900 dark:text-white">Configure Sink (Destination)</h2>
                     </div>
                     <button
                         onClick={onClose}
-                        className="p-2 hover:bg-white/10 rounded-lg transition-colors text-slate-400 hover:text-white"
+                        className="p-2 hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg transition-colors text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
                     >
                         <X className="w-5 h-5" />
                     </button>
@@ -149,7 +149,7 @@ export const SinkConfigModal: React.FC<SinkConfigModalProps> = ({
                 <div className="p-6 space-y-6">
                     {/* Linked Service Selection */}
                     <div>
-                        <label className="block text-sm font-medium text-slate-200 mb-2">
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
                             Destination Service
                         </label>
                         <select
@@ -164,14 +164,14 @@ export const SinkConfigModal: React.FC<SinkConfigModalProps> = ({
                                 </option>
                             ))}
                         </select>
-                        <p className="text-xs text-slate-400 mt-2">
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
                             Select the database service where you want to write data.
                         </p>
                     </div>
 
                     {/* Table Name */}
                     <div>
-                        <label className="block text-sm font-medium text-slate-200 mb-2">
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
                             Destination Table Name
                         </label>
                         <input
@@ -181,21 +181,21 @@ export const SinkConfigModal: React.FC<SinkConfigModalProps> = ({
                             className="w-full glass-input p-3 rounded-xl outline-none"
                             placeholder="target_table_name"
                         />
-                        <p className="text-xs text-slate-400 mt-2">
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
                             The table will be created if it doesn't exist (depending on write mode).
                         </p>
                     </div>
 
                     {/* Write Mode */}
                     <div>
-                        <label className="block text-sm font-medium text-slate-200 mb-2">
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
                             Write Mode
                         </label>
                         <div className="space-y-2">
                             {WRITE_MODES.map(mode => (
                                 <label
                                     key={mode.value}
-                                    className={`flex items-center gap-3 p-3 glass-panel rounded-lg cursor-pointer transition-colors ${writeMode === mode.value ? 'bg-pink-500/20 border-pink-500/50' : 'hover:bg-white/10'
+                                    className={`flex items-center gap-3 p-3 glass-panel rounded-lg cursor-pointer transition-colors ${writeMode === mode.value ? 'bg-pink-100 dark:bg-pink-500/20 border-pink-500/50' : 'hover:bg-slate-100 dark:hover:bg-white/10'
                                         }`}
                                 >
                                     <input
@@ -207,7 +207,7 @@ export const SinkConfigModal: React.FC<SinkConfigModalProps> = ({
                                         className="w-4 h-4 accent-pink-500"
                                     />
                                     <div>
-                                        <div className="font-medium text-white">{mode.label}</div>
+                                        <div className="font-medium text-slate-900 dark:text-white">{mode.label}</div>
                                     </div>
                                 </label>
                             ))}

@@ -4,12 +4,10 @@ Supports RAG (Retrieval-Augmented Generation) for document-based chat.
 """
 from typing import List, Optional, Dict, Any
 import chromadb
-from chromadb.config import Settings as ChromaSettings
 from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
-from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 from app.core.config import settings
+from app.services.embeddings_models import EmbeddingModelFactory
 
 
 class VectorStoreService:
@@ -39,10 +37,13 @@ class VectorStoreService:
         self.embedding_model = embedding_model
         self.api_key = api_key
 
+        # Initialize Embedding Factory
+        self.embedding_factory = EmbeddingModelFactory()
+
         # Initialize ChromaDB client
         self.client = self._initialize_client()
 
-        # Initialize embeddings - use local model if no API key
+        # Initialize embeddings using Factory
         self.embeddings = self._initialize_embeddings()
 
         # Initialize vector store
@@ -72,29 +73,15 @@ class VectorStoreService:
 
     def _initialize_embeddings(self):
         """
-        Initialize embeddings model.
-        Uses OpenAI if API key is available, otherwise falls back to local HuggingFace model.
+        Initialize embeddings model using Strategy Pattern.
 
         Returns:
             Embeddings instance
         """
-        # Check if OpenAI API key is available
-        openai_key = self.api_key or settings.OPENAI_API_KEY
-
-        if openai_key:
-            # Use OpenAI embeddings
-            return OpenAIEmbeddings(
-                model=self.embedding_model,
-                api_key=openai_key
-            )
-        else:
-            # Fall back to local HuggingFace embeddings
-            print("No OpenAI API key found. Using local HuggingFace embeddings (all-MiniLM-L6-v2)")
-            return HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-MiniLM-L6-v2",
-                model_kwargs={'device': 'cpu'},
-                encode_kwargs={'normalize_embeddings': True}
-            )
+        return self.embedding_factory.create_embedding_model(
+            embedding_model=self.embedding_model,
+            api_key=self.api_key
+        )
 
     def _initialize_vector_store(self) -> Chroma:
         """

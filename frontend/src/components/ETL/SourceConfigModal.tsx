@@ -291,7 +291,7 @@ export const SourceConfigModal: React.FC<SourceConfigModalProps> = ({
         return (
             <div className="space-y-4">
                 <div>
-                    <label className="block text-sm font-medium text-slate-200 mb-2">Service Name</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">Service Name</label>
                     <input
                         type="text"
                         value={serviceName}
@@ -301,7 +301,7 @@ export const SourceConfigModal: React.FC<SourceConfigModalProps> = ({
                     />
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-slate-200 mb-2">Database Type</label>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">Database Type</label>
                     <select
                         value={dbType}
                         onChange={(e) => setDbType(e.target.value)}
@@ -383,10 +383,11 @@ export const SourceConfigModal: React.FC<SourceConfigModalProps> = ({
         <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[200] p-4">
             <div className="glass-panel w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl animate-in zoom-in-95">
                 {/* Header */}
-                <div className="sticky top-0 glass-panel border-b border-white/10 p-6 flex items-center justify-between z-10">
+                {/* Header */}
+                <div className="sticky top-0 glass-panel border-b border-slate-200 dark:border-white/10 p-6 flex items-center justify-between z-10">
                     <div className="flex items-center gap-3">
-                        <Database className="w-6 h-6 text-indigo-400" />
-                        <h2 className="text-xl font-bold text-white">
+                        <Database className="w-6 h-6 text-indigo-500 dark:text-indigo-400" />
+                        <h2 className="text-xl font-bold text-slate-900 dark:text-white">
                             {step === 'select-dataset' && 'Select Dataset'}
                             {step === 'select-linked-service' && 'Choose Linked Service'}
                             {step === 'create-linked-service' && 'New Linked Service'}
@@ -394,7 +395,7 @@ export const SourceConfigModal: React.FC<SourceConfigModalProps> = ({
                             {step === 'columns' && 'Select Columns'}
                         </h2>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+                    <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"><X className="w-5 h-5" /></button>
                 </div>
 
                 <div className="p-6">
@@ -403,15 +404,15 @@ export const SourceConfigModal: React.FC<SourceConfigModalProps> = ({
                             <div className="space-y-2">
                                 {linkedServices.length === 0 && <div className="text-center text-slate-400 py-8">No linked services found. Create one to get started.</div>}
                                 {linkedServices.map(service => (
-                                    <div key={service.id} className="flex items-center gap-3 p-4 glass-panel hover:bg-white/10 rounded-xl cursor-pointer" onClick={() => { setSelectedLinkedServiceId(service.id); setStep('select-dataset'); }}>
+                                    <div key={service.id} className="flex items-center gap-3 p-4 glass-panel hover:bg-slate-100 dark:hover:bg-white/10 rounded-xl cursor-pointer" onClick={() => { setSelectedLinkedServiceId(service.id); setStep('select-dataset'); }}>
                                         <div className="flex-1">
-                                            <div className="font-medium text-white">{service.name}</div>
-                                            <div className="text-sm text-slate-400 capitalize">{service.service_type.replace('_', ' ')}</div>
+                                            <div className="font-medium text-slate-900 dark:text-white">{service.name}</div>
+                                            <div className="text-sm text-slate-500 dark:text-slate-400 capitalize">{service.service_type.replace('_', ' ')}</div>
                                         </div>
                                     </div>
                                 ))}
                             </div>
-                            <button onClick={() => { setConnectionConfig({}); setServiceName(''); setStep('create-linked-service'); }} className="w-full p-4 border-2 border-dashed border-white/20 hover:border-indigo-500/50 rounded-xl text-slate-300 hover:text-white transition-colors flex flex-col items-center justify-center gap-1">
+                            <button onClick={() => { setConnectionConfig({}); setServiceName(''); setStep('create-linked-service'); }} className="w-full p-4 border-2 border-dashed border-slate-300 dark:border-white/20 hover:border-indigo-500/50 rounded-xl text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors flex flex-col items-center justify-center gap-1">
                                 <span className="font-medium">+ Create New Service</span>
                             </button>
                         </div>
@@ -419,24 +420,24 @@ export const SourceConfigModal: React.FC<SourceConfigModalProps> = ({
 
                     {step === 'select-dataset' && selectedLinkedServiceId && (
                         <div className="space-y-4">
-                            <div className="flex items-center gap-2 pb-2 border-b border-white/10">
-                                <span className="text-sm text-slate-400">Context: </span>
-                                <span className="text-sm font-medium text-indigo-400">
+                            <div className="flex items-center gap-2 pb-2 border-b border-slate-200 dark:border-white/10">
+                                <span className="text-sm text-slate-500 dark:text-slate-400">Context: </span>
+                                <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
                                     {linkedServices.find(s => s.id === selectedLinkedServiceId)?.name || 'Unknown Service'}
                                 </span>
                             </div>
 
                             <div className="space-y-2">
                                 {dataSources.filter(ds => ds.linked_service_id === selectedLinkedServiceId).length === 0 && (
-                                    <div className="text-center text-slate-400 py-8">No datasets configured for this service.</div>
+                                    <div className="text-center text-slate-500 dark:text-slate-400 py-8">No datasets configured for this service.</div>
                                 )}
                                 {dataSources
                                     .filter(ds => ds.linked_service_id === selectedLinkedServiceId)
                                     .map(source => (
-                                        <div key={source.id} className="group flex items-center gap-3 p-4 glass-panel hover:bg-white/10 rounded-xl transition-colors cursor-pointer" onClick={() => handleSelectExistingDataset(source.id)}>
+                                        <div key={source.id} className="group flex items-center gap-3 p-4 glass-panel hover:bg-slate-100 dark:hover:bg-white/10 rounded-xl transition-colors cursor-pointer" onClick={() => handleSelectExistingDataset(source.id)}>
                                             <div className="flex-1">
-                                                <div className="font-medium text-white">{source.name}</div>
-                                                <div className="text-sm text-slate-400">{source.table_name}</div>
+                                                <div className="font-medium text-slate-900 dark:text-white">{source.name}</div>
+                                                <div className="text-sm text-slate-500 dark:text-slate-400">{source.table_name}</div>
                                             </div>
                                             <button onClick={(e) => handleDeleteSource(e, source.id)} className="opacity-0 group-hover:opacity-100 p-2 hover:bg-red-500/20 text-red-400 rounded-lg"><Trash2 className="w-4 h-4" /></button>
                                         </div>
@@ -444,67 +445,72 @@ export const SourceConfigModal: React.FC<SourceConfigModalProps> = ({
                             </div>
 
                             <div className="flex gap-3 pt-2">
-                                <button onClick={() => setStep('select-linked-service')} className="px-4 py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl">Back</button>
+                                <button onClick={() => setStep('select-linked-service')} className="px-4 py-3 bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/20 text-slate-900 dark:text-white rounded-xl">Back</button>
                                 <button onClick={() => setStep('create-dataset')} className="flex-1 p-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl">
                                     + Connect New Table
                                 </button>
                             </div>
                         </div>
-                    )}
+                    )
+                    }
 
                     {step === 'create-linked-service' && renderLinkedServiceForm()}
 
-                    {step === 'create-dataset' && (
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-200 mb-2">Dataset Display Name</label>
-                                <input type="text" value={datasetName} onChange={e => setDatasetName(e.target.value)} className="w-full glass-input p-3 rounded-xl outline-none" placeholder="Users Table" />
+                    {
+                        step === 'create-dataset' && (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">Dataset Display Name</label>
+                                    <input type="text" value={datasetName} onChange={e => setDatasetName(e.target.value)} className="w-full glass-input p-3 rounded-xl outline-none" placeholder="Users Table" />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">Source Table Name</label>
+                                    <input type="text" value={tableName} onChange={e => setTableName(e.target.value)} className="w-full glass-input p-3 rounded-xl outline-none" placeholder="users" />
+                                </div>
+                                <div className="flex gap-3 pt-4">
+                                    <button onClick={() => setStep('select-linked-service')} className="px-4 py-3 bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/20 text-slate-900 dark:text-white rounded-xl">Back</button>
+                                    <button onClick={handleCreateDataset} disabled={!datasetName || !tableName} className="flex-1 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl">
+                                        Save Dataset
+                                    </button>
+                                </div>
                             </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-200 mb-2">Source Table Name</label>
-                                <input type="text" value={tableName} onChange={e => setTableName(e.target.value)} className="w-full glass-input p-3 rounded-xl outline-none" placeholder="users" />
-                            </div>
-                            <div className="flex gap-3 pt-4">
-                                <button onClick={() => setStep('select-linked-service')} className="px-4 py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl">Back</button>
-                                <button onClick={handleCreateDataset} disabled={!datasetName || !tableName} className="flex-1 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl">
-                                    Save Dataset
-                                </button>
-                            </div>
-                        </div>
-                    )}
+                        )
+                    }
 
-                    {step === 'columns' && (
-                        <div className="space-y-4">
-                            {loadingSchema ? (
-                                <div className="flex justify-center py-12"><Loader2 className="animate-spin w-8 h-8 text-indigo-400" /></div>
-                            ) : (
-                                <>
-                                    <div className="flex gap-2 mb-2">
-                                        <button onClick={() => setSelectedColumns(columns.map(c => c.name))} className="px-3 py-1 bg-white/10 rounded-lg text-xs text-slate-300">Select All</button>
-                                        <button onClick={() => setSelectedColumns([])} className="px-3 py-1 bg-white/10 rounded-lg text-xs text-slate-300">Deselect All</button>
-                                    </div>
-                                    <div className="space-y-2 max-h-80 overflow-y-auto">
-                                        {columns.map(col => (
-                                            <label key={col.name} className="flex items-center gap-3 p-3 glass-panel hover:bg-white/10 rounded-lg cursor-pointer">
-                                                <input type="checkbox" checked={selectedColumns.includes(col.name)} onChange={() => toggleColumn(col.name)} className="w-4 h-4 accent-indigo-500" />
-                                                <div>
-                                                    <div className="font-medium text-white">{col.name}</div>
-                                                    <div className="text-xs text-slate-400">{col.type}</div>
-                                                </div>
-                                            </label>
-                                        ))}
-                                    </div>
-                                    <div className="flex gap-3 mt-4">
-                                        <button onClick={() => setStep('select-dataset')} className="px-4 py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl">Back</button>
-                                        <button onClick={handleSaveConfig} disabled={selectedColumns.length === 0} className="flex-1 px-4 py-3 bg-indigo-600 text-white rounded-xl">Save Configuration</button>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                    )}
+                    {
+                        step === 'columns' && (
+                            <div className="space-y-4">
+                                {loadingSchema ? (
+                                    <div className="flex justify-center py-12"><Loader2 className="animate-spin w-8 h-8 text-indigo-400" /></div>
+                                ) : (
+                                    <>
+                                        <div className="flex gap-2 mb-2">
+                                            <button onClick={() => setSelectedColumns(columns.map(c => c.name))} className="px-3 py-1 bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/20 rounded-lg text-xs text-slate-600 dark:text-slate-300">Select All</button>
+                                            <button onClick={() => setSelectedColumns([])} className="px-3 py-1 bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/20 rounded-lg text-xs text-slate-600 dark:text-slate-300">Deselect All</button>
+                                        </div>
+                                        <div className="space-y-2 max-h-80 overflow-y-auto">
+                                            {columns.map(col => (
+                                                <label key={col.name} className="flex items-center gap-3 p-3 glass-panel hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg cursor-pointer">
+                                                    <input type="checkbox" checked={selectedColumns.includes(col.name)} onChange={() => toggleColumn(col.name)} className="w-4 h-4 accent-indigo-500" />
+                                                    <div>
+                                                        <div className="font-medium text-slate-900 dark:text-white">{col.name}</div>
+                                                        <div className="text-xs text-slate-500 dark:text-slate-400">{col.type}</div>
+                                                    </div>
+                                                </label>
+                                            ))}
+                                        </div>
+                                        <div className="flex gap-3 mt-4">
+                                            <button onClick={() => setStep('select-dataset')} className="px-4 py-3 bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/20 text-slate-900 dark:text-white rounded-xl">Back</button>
+                                            <button onClick={handleSaveConfig} disabled={selectedColumns.length === 0} className="flex-1 px-4 py-3 bg-indigo-600 text-white rounded-xl">Save Configuration</button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        )
+                    }
                 </div>
             </div>
-        </div>,
+        </div >,
         document.body
     );
 };

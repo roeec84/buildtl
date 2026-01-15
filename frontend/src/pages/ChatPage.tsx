@@ -21,7 +21,7 @@ export const ChatPage = () => {
           <button
             onClick={() => navigate('/etl')}
             className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl transition-all shadow-lg shadow-purple-500/25 font-medium"
-            title="Open ETL Data Factory"
+            title="Open BuildTL Factory"
           >
             <Network className="w-4 h-4" />
             ETL Pipeline

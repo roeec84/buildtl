@@ -24,12 +24,14 @@ class Conversation(Base):
     id = Column(Integer, primary_key=True, index=True)
     chat_id = Column(String, unique=True, index=True, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    dashboard_id = Column(Integer, ForeignKey("dashboards.id", ondelete="CASCADE"), nullable=True) # Linked to a dashboard
     title = Column(String, nullable=False, default="New Chat")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
     user = relationship("User", back_populates="conversations")
+    dashboard = relationship("Dashboard", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.id")
 
     def __repr__(self):

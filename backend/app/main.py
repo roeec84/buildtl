@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.db.database import init_db
 from app.api.endpoints import auth, chat, files, datasource
 from app.api.endpoints import settings as settings_router
-from app.api.endpoints import etl
+from app.api.endpoints import etl, dashboard
 
 
 @asynccontextmanager
@@ -52,6 +52,7 @@ app.include_router(settings_router.router)
 app.include_router(files.router)
 app.include_router(datasource.router)
 app.include_router(etl.router)
+app.include_router(dashboard.router, prefix="/api/dashboards", tags=["dashboards"])
 
 @app.get("/")
 async def root():

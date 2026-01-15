@@ -12,11 +12,12 @@ import {
     ReactFlowProvider,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { SourceNode, TransformNode, SinkNode } from '../components/ETL/ETLNodes';
+import { SourceNode, TransformNode, SinkNode, PipelineNode } from '../components/ETL/ETLNodes';
 import { SourceConfigModal } from '../components/ETL/SourceConfigModal';
 import { TransformConfigModal } from '../components/ETL/TransformConfigModal';
 import { SinkConfigModal } from '../components/ETL/SinkConfigModal';
-import { Play, Database, Wand2, FileOutput, ArrowLeft, Bot, Loader2, Save, Trash2, FileText, History } from 'lucide-react';
+import { PipelineConfigModal } from '../components/ETL/PipelineConfigModal';
+import { Play, Database, Wand2, FileOutput, ArrowLeft, Bot, Loader2, Save, Trash2, FileText, History, Workflow } from 'lucide-react';
 // ... (imports)
 
 // ... (inside component)
@@ -25,11 +26,13 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { settingsApi, etlApi } from '../services/api';
 import { useQuery } from '@tanstack/react-query';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 const nodeTypes = {
     source: SourceNode,
     transform: TransformNode,
     sink: SinkNode,
+    pipeline: PipelineNode,
 };
 
 type NodeData = {
@@ -43,6 +46,7 @@ type NodeData = {
     generatedCode?: string;
     writeMode?: string;
     onDelete?: () => void;
+    pipelineId?: number; // For pipeline nodes
 };
 
 // Define a custom Node type that extends the basic Node structure from React Flow but with our data
@@ -70,6 +74,10 @@ export default function ETLPage() {
     // Sink configuration modal state
     const [showSinkConfigModal, setShowSinkConfigModal] = React.useState(false);
     const [activeSinkNodeId, setActiveSinkNodeId] = React.useState<string | null>(null);
+
+    // Pipeline configuration modal state
+    const [showPipelineConfigModal, setShowPipelineConfigModal] = React.useState(false);
+    const [activePipelineNodeId, setActivePipelineNodeId] = React.useState<string | null>(null);
 
     // Model selection state
     const [selectedModel, setSelectedModel] = React.useState<string>('');
@@ -138,6 +146,16 @@ export default function ETLPage() {
         event.dataTransfer.dropEffect = 'move';
     }, []);
 
+    const onEdgeClick = React.useCallback(
+        (event: React.MouseEvent, edge: Edge) => {
+            event.stopPropagation();
+            if (confirm("Disconnect this link?")) {
+                setEdges((eds) => eds.filter((e) => e.id !== edge.id));
+            }
+        },
+        [setEdges],
+    );
+
     // Generic delete handler
     const handleDeleteNode = React.useCallback((nodeId: string) => {
         setNodes((nds) => nds.filter((node) => node.id !== nodeId));
@@ -164,11 +182,12 @@ export default function ETLPage() {
                 type,
                 position,
                 data: {
-                    label: type === 'source' ? 'New Source' : type === 'sink' ? 'New Sink' : 'AI Transform',
+                    label: type === 'source' ? 'New Source' : type === 'sink' ? 'New Sink' : type === 'pipeline' ? 'Select Pipeline' : 'AI Transform',
                     sourceType: type === 'source' ? 'SQL' : undefined,
                     prompt: type === 'transform' ? '' : undefined,
                     onEdit: undefined, // Will be handled by click
                     onDelete: () => handleDeleteNode(nodeId),
+                    pipelineId: type === 'pipeline' ? undefined : undefined,
                 },
             };
 
@@ -188,6 +207,9 @@ export default function ETLPage() {
         } else if (node.type === 'sink') {
             setActiveSinkNodeId(node.id);
             setShowSinkConfigModal(true);
+        } else if (node.type === 'pipeline') {
+            setActivePipelineNodeId(node.id);
+            setShowPipelineConfigModal(true);
         }
     };
 
@@ -261,6 +283,29 @@ export default function ETLPage() {
                 return node;
             }));
             setActiveSinkNodeId(null);
+        }
+    }
+
+
+    const handleSavePipelineConfig = (config: {
+        pipelineId: number;
+        pipelineName: string;
+    }) => {
+        if (activePipelineNodeId) {
+            setNodes((nds) => nds.map((node) => {
+                if (node.id === activePipelineNodeId) {
+                    return {
+                        ...node,
+                        data: {
+                            ...node.data,
+                            pipelineId: config.pipelineId,
+                            label: config.pipelineName,
+                        }
+                    };
+                }
+                return node;
+            }));
+            setActivePipelineNodeId(null);
         }
     };
 
@@ -411,13 +456,13 @@ export default function ETLPage() {
 
     return (
         <ReactFlowProvider>
-            <div className="h-screen w-full bg-slate-950 text-white flex flex-col">
+            <div className="h-screen w-full bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white flex flex-col transition-colors duration-300">
                 {/* Header */}
-                <div className="h-16 border-b border-white/10 flex items-center justify-between px-6 bg-slate-900/50 backdrop-blur-md z-10">
+                <div className="h-16 border-b border-slate-200 dark:border-white/10 flex items-center justify-between px-6 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md z-10 transition-colors duration-300">
                     <div className="flex items-center gap-4">
                         <button
                             onClick={() => navigate('/')}
-                            className="p-2 hover:bg-white/5 rounded-lg transition-colors text-slate-400 hover:text-white"
+                            className="p-2 hover:bg-slate-100 dark:hover:bg-white/5 rounded-lg transition-colors text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
                             title="Back to Chat"
                         >
                             <ArrowLeft className="w-5 h-5" />
@@ -425,31 +470,33 @@ export default function ETLPage() {
                         <div>
                             <div className="flex items-center gap-2">
                                 <h1 className="text-xl font-bold bg-gradient-to-r from-purple-400 to-indigo-400 bg-clip-text text-transparent">
-                                    ETL Data Factory
+                                    BuildTL Factory
                                 </h1>
                             </div>
-                            <input
-                                type="text"
-                                value={pipelineName}
-                                onChange={(e) => setPipelineName(e.target.value)}
-                                className="bg-transparent border-none outline-none text-sm text-slate-400 focus:text-white focus:bg-white/5 rounded px-1 -ml-1 w-64"
-                                placeholder="Untitled Pipeline"
-                            />
                         </div>
+                        <input
+                            type="text"
+                            value={pipelineName}
+                            onChange={(e) => setPipelineName(e.target.value)}
+                            className="bg-transparent border-none outline-none text-sm text-slate-600 dark:text-slate-400 focus:text-slate-900 dark:focus:text-white focus:bg-slate-100 dark:focus:bg-white/5 rounded px-1 -ml-1 w-64"
+                            placeholder="Untitled Pipeline"
+                        />
                     </div>
 
                     <div className="flex items-center gap-4">
+                        <ThemeToggle />
+
                         {/* Model Selector */}
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800/50 rounded-lg border border-white/10">
-                            <Bot className="w-4 h-4 text-slate-400" />
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-white/50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-white/10">
+                            <Bot className="w-4 h-4 text-slate-500 dark:text-slate-400" />
                             <select
                                 value={selectedModel}
                                 onChange={(e) => setSelectedModel(e.target.value)}
-                                className="bg-transparent border-none outline-none text-sm text-slate-200 cursor-pointer min-w-[150px]"
+                                className="bg-transparent border-none outline-none text-sm text-slate-700 dark:text-slate-200 cursor-pointer min-w-[150px]"
                             >
-                                <option value="" disabled className="bg-slate-900 text-slate-500">Select Model</option>
+                                <option value="" disabled className="bg-white dark:bg-slate-900 text-slate-500">Select Model</option>
                                 {models?.map((model: any) => (
-                                    <option key={model.id} value={model.name} className="bg-slate-900 text-slate-200">
+                                    <option key={model.id} value={model.name} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-200">
                                         {model.displayName || model.name}
                                     </option>
                                 ))}
@@ -459,7 +506,7 @@ export default function ETLPage() {
 
                         <button
                             onClick={handleShowHistory}
-                            className="px-3 py-2 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg transition-colors flex items-center gap-2"
+                            className="px-3 py-2 hover:bg-slate-100 dark:hover:bg-white/10 text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors flex items-center gap-2"
                             title="Execution History"
                         >
                             <History className="w-5 h-5" />
@@ -498,13 +545,13 @@ export default function ETLPage() {
                 {/* Main Content */}
                 <div className="flex-1 flex overflow-hidden">
                     {/* Sidebar */}
-                    <div className="w-64 border-r border-white/10 flex flex-col z-10 glass-panel">
+                    <div className="w-64 border-r border-slate-200 dark:border-white/10 flex flex-col z-10 glass-panel">
                         {/* Components Section */}
-                        <div className="p-4 border-b border-white/10">
-                            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Components</h2>
+                        <div className="p-4 border-b border-slate-200 dark:border-white/10">
+                            <h2 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">Components</h2>
                             <div className="space-y-2">
                                 <div
-                                    className="bg-slate-800/50 p-2.5 rounded-lg border border-white/5 cursor-grab hover:border-indigo-500/50 hover:bg-slate-800 transition-all flex items-center gap-3 group"
+                                    className="bg-white/50 dark:bg-slate-800/50 p-2.5 rounded-lg border border-slate-200 dark:border-white/5 cursor-grab hover:border-indigo-500/50 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center gap-3 group"
                                     onDragStart={(event) => event.dataTransfer.setData('application/reactflow', 'source')}
                                     draggable
                                 >
@@ -535,6 +582,21 @@ export default function ETLPage() {
                                     </div>
                                     <span className="text-sm font-medium text-slate-200">Sink Table</span>
                                 </div>
+                            </div>
+                        </div>
+
+                        {/* Pipeline Components Section */}
+                        <div className="p-4 border-b border-slate-200 dark:border-white/10">
+                            <h2 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">Nested Pipelines</h2>
+                            <div
+                                className="bg-slate-800/50 p-2.5 rounded-lg border border-white/5 cursor-grab hover:border-orange-500/50 hover:bg-slate-800 transition-all flex items-center gap-3 group"
+                                onDragStart={(event) => event.dataTransfer.setData('application/reactflow', 'pipeline')}
+                                draggable
+                            >
+                                <div className="p-1.5 bg-orange-500/20 rounded-md group-hover:bg-orange-500/30 transition-colors">
+                                    <Workflow className="w-4 h-4 text-orange-400" />
+                                </div>
+                                <span className="text-sm font-medium text-slate-200">Pipeline Component</span>
                             </div>
                         </div>
 
@@ -582,12 +644,13 @@ export default function ETLPage() {
                             onDrop={onDrop}
                             onDragOver={onDragOver}
                             onNodeClick={onNodeClick}
+                            onEdgeClick={onEdgeClick}
                             nodeTypes={nodeTypes}
                             fitView
-                            className="bg-slate-950"
+                            className="bg-slate-50 dark:bg-slate-950 transition-colors duration-300"
                         >
-                            <Background color="#334155" gap={16} size={1} />
-                            <Controls className="bg-slate-800 border-white/10 fill-white" />
+                            <Background color="#64748b" gap={16} size={1} className="opacity-20 dark:opacity-40" />
+                            <Controls className="bg-white dark:bg-slate-800 border-slate-200 dark:border-white/10 fill-slate-900 dark:fill-white text-slate-900 dark:text-white" />
                             {/* <MiniMap
                                 className="!bg-slate-800 !border-white/10"
                                 maskColor="rgba(15, 23, 42, 0.7)"
@@ -689,99 +752,127 @@ export default function ETLPage() {
                     />,
                     document.body
                 )}
+
+                {/* Pipeline Configuration Modal */}
+                {createPortal(
+                    <PipelineConfigModal
+                        isOpen={showPipelineConfigModal}
+                        onClose={() => {
+                            setShowPipelineConfigModal(false);
+                            setActivePipelineNodeId(null);
+                        }}
+                        onSave={handleSavePipelineConfig}
+                        currentPipelineId={currentPipelineId}
+                        existingConfig={
+                            activePipelineNodeId
+                                ? (() => {
+                                    const data = nodes.find(n => n.id === activePipelineNodeId)?.data;
+                                    return data ? {
+                                        pipelineId: data.pipelineId,
+                                    } : undefined;
+                                })()
+                                : undefined
+                        }
+                    />,
+                    document.body
+                )}
             </div>
 
             {/* History Modal */}
-            {createPortal(
-                showHistoryModal && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-end">
-                        <div className="w-96 h-full bg-slate-900 border-l border-white/10 p-6 shadow-2xl animate-in slide-in-from-right duration-200">
-                            <div className="flex items-center justify-between mb-6">
-                                <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                                    <History className="w-5 h-5 text-indigo-400" />
-                                    Execution History
-                                </h2>
-                                <button
-                                    onClick={() => setShowHistoryModal(false)}
-                                    className="text-slate-400 hover:text-white"
-                                >
-                                    ✕
-                                </button>
-                            </div>
-
-                            <div className="space-y-4 overflow-y-auto h-[calc(100vh-100px)]">
-                                {executions.length === 0 && (
-                                    <p className="text-slate-500 text-center py-4">No executions found.</p>
-                                )}
-                                {executions.map((exec) => (
-                                    <div
-                                        key={exec.id}
-                                        className="bg-slate-800/50 p-4 rounded-lg border border-white/5 cursor-pointer hover:bg-slate-800 transition-colors group"
-                                        onClick={() => setSelectedExecution(exec)}
+            {
+                createPortal(
+                    showHistoryModal && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-end">
+                            <div className="w-96 h-full bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-white/10 p-6 shadow-2xl animate-in slide-in-from-right duration-200">
+                                <div className="flex items-center justify-between mb-6">
+                                    <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                                        <History className="w-5 h-5 text-indigo-500 dark:text-indigo-400" />
+                                        Execution History
+                                    </h2>
+                                    <button
+                                        onClick={() => setShowHistoryModal(false)}
+                                        className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
                                     >
-                                        <div className="flex items-center justify-between mb-2">
-                                            <span className={`text-xs font-bold px-2 py-1 rounded-full uppercase ${exec.status === 'completed' ? 'bg-green-500/20 text-green-400' :
-                                                exec.status === 'failed' ? 'bg-red-500/20 text-red-400' :
-                                                    'bg-blue-500/20 text-blue-400'
-                                                }`}>
-                                                {exec.status}
-                                            </span>
-                                            <span className="text-xs text-slate-500">
-                                                {new Date(exec.started_at).toLocaleString()}
-                                            </span>
+                                        ✕
+                                    </button>
+                                </div>
+
+                                <div className="space-y-4 overflow-y-auto h-[calc(100vh-100px)]">
+                                    {executions.length === 0 && (
+                                        <p className="text-slate-500 text-center py-4">No executions found.</p>
+                                    )}
+                                    {executions.map((exec) => (
+                                        <div
+                                            key={exec.id}
+                                            className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg border border-slate-200 dark:border-white/5 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+                                            onClick={() => setSelectedExecution(exec)}
+                                        >
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className={`text-xs font-bold px-2 py-1 rounded-full uppercase ${exec.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                                                    exec.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                                                        'bg-blue-500/20 text-blue-400'
+                                                    }`}>
+                                                    {exec.status}
+                                                </span>
+                                                <span className="text-xs text-slate-500">
+                                                    {new Date(exec.started_at).toLocaleString()}
+                                                </span>
+                                            </div>
+                                            {exec.status === 'completed' && exec.finished_at && (
+                                                <div className="mt-2 text-xs text-slate-400">
+                                                    Duration: {((new Date(exec.finished_at).getTime() - new Date(exec.started_at).getTime()) / 1000).toFixed(1)}s
+                                                </div>
+                                            )}
+                                            {exec.error_message && (
+                                                <div className="mt-2 text-xs text-red-400 bg-red-950/30 p-2 rounded max-h-32 overflow-y-auto font-mono whitespace-pre-wrap">
+                                                    {exec.error_message}
+                                                </div>
+                                            )}
                                         </div>
-                                        {exec.status === 'completed' && exec.finished_at && (
-                                            <div className="mt-2 text-xs text-slate-400">
-                                                Duration: {((new Date(exec.finished_at).getTime() - new Date(exec.started_at).getTime()) / 1000).toFixed(1)}s
-                                            </div>
-                                        )}
-                                        {exec.error_message && (
-                                            <div className="mt-2 text-xs text-red-400 bg-red-950/30 p-2 rounded max-h-32 overflow-y-auto font-mono whitespace-pre-wrap">
-                                                {exec.error_message}
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
                             </div>
                         </div>
-                    </div>
-                ),
-                document.body
-            )}
+                    ),
+                    document.body
+                )
+            }
 
             {/* Execution Details JSON Modal */}
-            {createPortal(
-                selectedExecution && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[210] flex items-center justify-center p-4">
-                        <div className="bg-slate-900 border border-white/10 rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-in zoom-in-95 duration-200">
-                            <div className="flex items-center justify-between p-4 border-b border-white/10">
-                                <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                                    <FileText className="w-5 h-5 text-indigo-400" />
-                                    Execution Details
-                                </h2>
-                                <button
-                                    onClick={() => setSelectedExecution(null)}
-                                    className="text-slate-400 hover:text-white"
-                                >
-                                    ✕
-                                </button>
-                            </div>
-                            <div className="p-4 overflow-auto font-mono text-xs text-slate-300 bg-slate-950/50 flex-1">
-                                <pre>{JSON.stringify(selectedExecution, null, 2)}</pre>
-                            </div>
-                            <div className="p-4 border-t border-white/10 flex justify-end">
-                                <button
-                                    onClick={() => setSelectedExecution(null)}
-                                    className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm transition-colors"
-                                >
-                                    Close
-                                </button>
+            {
+                createPortal(
+                    selectedExecution && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[210] flex items-center justify-center p-4">
+                            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-in zoom-in-95 duration-200">
+                                <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-white/10">
+                                    <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                                        <FileText className="w-5 h-5 text-indigo-500 dark:text-indigo-400" />
+                                        Execution Details
+                                    </h2>
+                                    <button
+                                        onClick={() => setSelectedExecution(null)}
+                                        className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                                <div className="p-4 overflow-auto font-mono text-xs text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950/50 flex-1">
+                                    <pre>{JSON.stringify(selectedExecution, null, 2)}</pre>
+                                </div>
+                                <div className="p-4 border-t border-slate-200 dark:border-white/10 flex justify-end">
+                                    <button
+                                        onClick={() => setSelectedExecution(null)}
+                                        className="px-4 py-2 bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/20 text-slate-900 dark:text-white rounded-lg text-sm transition-colors"
+                                    >
+                                        Close
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                ),
-                document.body
-            )}
-        </ReactFlowProvider>
+                    ),
+                    document.body
+                )
+            }
+        </ReactFlowProvider >
     );
 };

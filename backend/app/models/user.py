@@ -44,6 +44,7 @@ class User(Base):
     etl_data_sources = relationship("ETLDataSource", back_populates="user", cascade="all, delete-orphan")
     linked_services = relationship("LinkedService", back_populates="user", cascade="all, delete-orphan")
     etl_pipelines = relationship("ETLPipeline", back_populates="user", cascade="all, delete-orphan")
+    dashboards = relationship("Dashboard", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<User(id={self.id}, username='{self.username}', org='{self.organization}')>"

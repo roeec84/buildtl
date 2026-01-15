@@ -1,7 +1,7 @@
 """
 Message model for storing individual chat messages.
 """
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Enum
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Enum, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
@@ -31,6 +31,7 @@ class Message(Base):
     conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
     type = Column(Enum(MessageType), nullable=False)
     content = Column(Text, nullable=False)
+    metadata_json = Column(JSON, nullable=True) # For storing chart config or other metadata
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships

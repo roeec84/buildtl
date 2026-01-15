@@ -312,17 +312,12 @@ async def update_data_source(
     # Normalize name by removing spaces and add username prefix
     normalized_name = data_source_data.name.replace(" ", "")
     # Add username prefix to make collection unique per user
-    # Add username prefix to make collection unique per user
     collection_with_user = f"{current_user.username}_{normalized_name}"
 
     # Encrypt sensitive data in config
     processed_config = data_source_data.config.copy()
     for key, value in processed_config.items():
         if key in SENSITIVE_KEYS and value:
-            # If the value is already encrypted (potentially), we might re-encrypt it if we are not careful.
-            # However, the frontend usually sends the masked value or the new plain text value.
-            # A simple heuristic check could be used, or we just encrypt what we get.
-            # Assuming frontend sends new plaintext or we re-encrypt.
             processed_config[key] = encrypt_value(str(value))
 
     data_source.name = collection_with_user
@@ -365,8 +360,6 @@ async def delete_data_source(
             )
             await vector_store.delete()
     except Exception as e:
-        # Log error but don't prevent deletion of the record? 
-        # Or maybe just log it. Deleting the record is primary.
         print(f"Error deleting vector store collection for data source {data_source.id}: {e}")
 
     await db.delete(data_source)

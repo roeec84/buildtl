@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
-import { Database, FileOutput, Wand2, Settings2, Trash2 } from 'lucide-react';
+import { Database, FileOutput, Wand2, Settings2, Trash2, Workflow } from 'lucide-react';
 
 export const SourceNode = memo(({ data }: any) => {
     return (
@@ -88,6 +88,45 @@ export const SinkNode = memo(({ data }: any) => {
                 {data.label || "Output Table"}
             </div>
             <Handle type="target" position={Position.Left} className="!bg-emerald-500 !w-3 !h-3" />
+        </div>
+    );
+});
+
+export const PipelineNode = memo(({ data }: any) => {
+    return (
+        <div className="bg-slate-900 border border-orange-500/50 rounded-xl p-4 min-w-[220px] shadow-lg shadow-orange-500/10 dashed-border">
+            <div className="flex items-center justify-between mb-2 border-b border-orange-500/20 pb-2">
+                <div className="flex items-center gap-2">
+                    <Workflow className="w-4 h-4 text-orange-400" />
+                    <span className="text-sm font-semibold text-white">Pipeline</span>
+                </div>
+                <div className="flex gap-1">
+                    <button
+                        className="p-1 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-colors"
+                        onClick={(e) => { e.stopPropagation(); data.onEdit?.(); }}
+                        title="Edit configuration"
+                    >
+                        <Settings2 className="w-3 h-3" />
+                    </button>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); data.onDelete?.(); }}
+                        className="text-slate-500 hover:text-red-400 p-1 rounded hover:bg-white/5 transition-colors"
+                        title="Delete node"
+                    >
+                        <Trash2 className="w-3 h-3" />
+                    </button>
+                </div>
+            </div>
+            <div className="text-xs text-slate-300 font-mono bg-slate-950/50 p-2 rounded">
+                {data.label || "Select Pipeline"}
+            </div>
+            <div className="flex justify-center mt-2">
+                <span className="text-[10px] bg-orange-500/20 text-orange-300 px-2 py-0.5 rounded-full">
+                    Nested Component
+                </span>
+            </div>
+            <Handle type="target" position={Position.Left} className="!bg-orange-500 !w-3 !h-3" />
+            <Handle type="source" position={Position.Right} className="!bg-orange-500 !w-3 !h-3" />
         </div>
     );
 });

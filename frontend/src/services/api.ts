@@ -78,10 +78,12 @@ export const chatApi = {
       id: conv.id,
       chat_id: conv.chat_id,
       title: conv.title,
+      dashboard_id: conv.dashboard_id,
       messages: conv.history?.map((msg: any, idx: number) => ({
         id: `${conv.chat_id}-${idx}`,
         type: msg.type.toLowerCase(),
         content: msg.data.content,
+        chartConfig: msg.data.chartConfig,
         timestamp: new Date().toISOString(),
       })) || [],
       created_at: conv.created_at,
@@ -96,6 +98,11 @@ export const chatApi = {
 
   updateConversation: async (chatId: string, title: string) => {
     const response = await api.patch(`/api/chat/conversations/${chatId}`, { title });
+    return response.data;
+  },
+
+  generateChart: async (request: { message: string; dataSourceId: number; model: string; dashboardId?: number; chartContext?: any }) => {
+    const response = await api.post('/api/chat/builder', request);
     return response.data;
   },
 };
@@ -276,6 +283,33 @@ export const fileApi = {
         'Content-Type': 'multipart/form-data',
       },
     });
+    return response.data;
+  },
+};
+
+export const dashboardApi = {
+  getDashboards: async () => {
+    const response = await api.get('/api/dashboards');
+    return response.data;
+  },
+
+  createDashboard: async (dashboard: any) => {
+    const response = await api.post('/api/dashboards', dashboard);
+    return response.data;
+  },
+
+  getDashboard: async (id: number) => {
+    const response = await api.get(`/api/dashboards/${id}`);
+    return response.data;
+  },
+
+  updateDashboard: async (id: number, dashboard: any) => {
+    const response = await api.put(`/api/dashboards/${id}`, dashboard);
+    return response.data;
+  },
+
+  deleteDashboard: async (id: number) => {
+    const response = await api.delete(`/api/dashboards/${id}`);
     return response.data;
   },
 };
