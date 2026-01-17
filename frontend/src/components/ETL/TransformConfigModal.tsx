@@ -11,6 +11,7 @@ interface TransformConfigModalProps {
     onSave: (config: {
         prompt: string;
         generatedCode: string;
+        sourceSchema?: any;
     }) => void;
     upstreamNodes?: Array<{
         id: string;
@@ -63,6 +64,7 @@ export const TransformConfigModal: React.FC<TransformConfigModalProps> = ({
         data: any[][];
         row_count: number;
         generated_code: string;
+        source_schema?: any;
     } | null>(null);
 
     const handleGeneratePreview = async () => {
@@ -119,6 +121,7 @@ export const TransformConfigModal: React.FC<TransformConfigModalProps> = ({
             onSave({
                 prompt,
                 generatedCode: previewData.generated_code,
+                sourceSchema: previewData.source_schema,
             });
             onClose();
         }
