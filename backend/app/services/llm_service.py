@@ -269,7 +269,7 @@ Answer the question based on the context above."""
     async def generate_response_with_sql_agent(
         self,
         user_message: str,
-        connection_string: str,
+        engine: Any,
         conversation_history: Optional[List[DBMessage]] = None
     ) -> Tuple[str, List[Dict[str, str]]]:
         """
@@ -277,7 +277,7 @@ Answer the question based on the context above."""
 
         Args:
             user_message: The user's query
-            connection_string: SQLAlchemy connection string for the database
+            engine: SQLAlchemy Engine object
             conversation_history: Optional list of previous messages
 
         Returns:
@@ -286,7 +286,7 @@ Answer the question based on the context above."""
         try:
             print(f"DEBUG: Initializing SQL Agent...")
             # Initialize SQL Database
-            db = SQLDatabase.from_uri(connection_string)
+            db = SQLDatabase(engine=engine)
             print(f"DEBUG: SQL Database initialized. Dialect: {db.dialect}, Tables: {db.get_usable_table_names()}")
 
             # Create SQL Agent
@@ -413,20 +413,20 @@ Input Context:
     async def generate_sql_query(
         self,
         user_message: str,
-        connection_string: str
+        engine: Any
     ) -> str:
         """
         Generate SQL query from natural language.
         
         Args:
             user_message: User's request
-            connection_string: DB Connection string
+            engine: SQLAlchemy Engine
             
         Returns:
             SQL Query string
         """
         try:
-            db = SQLDatabase.from_uri(connection_string)
+            db = SQLDatabase(engine=engine)
             schema = db.get_table_info()
             dialect = db.dialect
             

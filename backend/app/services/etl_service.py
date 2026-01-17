@@ -195,9 +195,10 @@ class ETLService:
         config = ls.connection_config.copy()
         
         # Decrypt sensitive fields
-        if 'password' in config:
-            config['password'] = decrypt_value(config['password'])
-        if 'credentials_json' in config:
+        sensitive_keys = ["password", "secret_key", "account_key", "access_key", "credentials_json"]
+        for key in sensitive_keys:
+            if key in config:
+                config[key] = decrypt_value(config[key])
             config['credentials_json'] = decrypt_value(config['credentials_json'])
         
         # JDBC Sources
@@ -227,26 +228,27 @@ class ETLService:
             dataset_id = config.get('dataset_id')
             table_id = datasource.table_name
             
-            # Write credentials to temp file
-            # Note: In a real persistent scenario i might manage key files differently.
-            # Using tempfile here is safe enough for preview.
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                json.dump(json.loads(config['credentials_json']), f)
-                credentials_path = f.name
+            # Configure BigQuery read with Base64 credentials
+            # Requires spark-bigquery-connector 0.25+ or so
+            import base64
             
-            # Configure BigQuery read
-            # Requires spark-bigquery-with-dependencies jar loaded in session
+            creds_json_str = config['credentials_json']
+            if isinstance(creds_json_str, str):
+                # Ensure it is a valid JSON string
+                pass 
+            
+            # Base64 encode the JSON
+            creds_b64 = base64.b64encode(creds_json_str.encode('utf-8')).decode('utf-8')
+            
             full_table_id = f"{dataset_id}.{table_id}"
             if project_id:
                 full_table_id = f"{project_id}.{full_table_id}"
 
-            # Use direct table read instead of query to avoid materialization dataset issues.
-            # Spark BQ connector pushes down filters and limits efficiently.
             reader = spark.read \
                 .format("bigquery") \
                 .option("viewsEnabled", "true") \
                 .option("materializationDataset", dataset_id) \
-                .option("credentialsFile", credentials_path)
+                .option("credentials", creds_b64)
             
             if project_id:
                  # Set parent project for billing
@@ -288,10 +290,14 @@ class ETLService:
             elif db_type == 'gcs':
                 # GCS Creds
                 if 'credentials_json' in config:
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                        json.dump(json.loads(config['credentials_json']), f)
-                        key_path = f.name
-                    conf.set("fs.gs.auth.service.account.json.keyfile", key_path)
+                     import json
+                     creds = json.loads(config['credentials_json'])
+                     conf.set("fs.gs.auth.service.account.email", creds.get('client_email'))
+                     conf.set("fs.gs.auth.service.account.private.key", creds.get('private_key'))
+                     conf.set("fs.gs.auth.service.account.private.key.id", creds.get('private_key_id'))
+                     conf.set("google.cloud.auth.service.account.enable", "true")
+                     # Unset keyfile to avoid conflict
+                     conf.unset("fs.gs.auth.service.account.json.keyfile")
                 
                 if not path.startswith("gs://"):
                     bucket = config.get('bucket')
@@ -355,9 +361,14 @@ class ETLService:
 
             if 'password' in config and is_encrypted(config['password']):
                  config['password'] = decrypt_value(config['password'])
-            if 'credentials_json' in config:
-                 if is_encrypted(config['credentials_json']):
-                     config['credentials_json'] = decrypt_value(config['credentials_json'])
+            if 'credentials_json' in config and is_encrypted(config['credentials_json']):
+                 config['credentials_json'] = decrypt_value(config['credentials_json'])
+            if 'secret_key' in config and is_encrypted(config['secret_key']):
+                 config['secret_key'] = decrypt_value(config['secret_key'])
+            if 'access_key' in config and is_encrypted(config['access_key']):
+                 config['access_key'] = decrypt_value(config['access_key'])
+            if 'account_key' in config and is_encrypted(config['account_key']):
+                 config['account_key'] = decrypt_value(config['account_key'])
 
             if db_type in ['postgresql', 'mysql', 'sql_server', 'azure_sql']:
                 # Build JDBC URL
@@ -401,10 +412,13 @@ class ETLService:
 
                 elif db_type == 'gcs':
                     if 'credentials_json' in config:
-                        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                            json.dump(json.loads(config['credentials_json']), f)
-                            key_path = f.name
-                        conf.set("fs.gs.auth.service.account.json.keyfile", key_path)
+                         import json
+                         creds = json.loads(config['credentials_json'])
+                         conf.set("fs.gs.auth.service.account.email", creds.get('client_email'))
+                         conf.set("fs.gs.auth.service.account.private.key", creds.get('private_key'))
+                         conf.unset("fs.gs.auth.service.account.json.keyfile")
+                         conf.set("fs.gs.auth.service.account.private.key.id", creds.get('private_key_id'))
+                         conf.set("google.cloud.auth.service.account.enable", "true")
                     
                     if not test_path:
                         bucket = config.get('bucket')
@@ -448,28 +462,6 @@ class ETLService:
             elif db_type == 'bigquery':
                 project_id = config.get('project_id')
                 dataset_id = config.get('dataset_id')
-                
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                    json.dump(json.loads(config['credentials_json']), f)
-                    credentials_path = f.name
-                
-                reader = spark.read \
-                    .format("bigquery") \
-                    .option("viewsEnabled", "true") \
-                    .option("materializationDataset", dataset_id) \
-                    .option("credentialsFile", credentials_path)
-                
-                if project_id:
-                    reader = reader.option("parentProject", project_id)
-                
-                if table_name:
-                    full_table_id = f"{dataset_id}.{table_name}"
-                    if project_id:
-                        full_table_id = f"{project_id}.{full_table_id}"
-                    df = reader.load(full_table_id)
-                else:
-                    # Test connection with a simple query
-                    df = reader.option("query", "SELECT 1").load()
                 
                 df.limit(1).collect()
                 
@@ -641,6 +633,12 @@ class ETLService:
             config['password'] = decrypt_value(config['password'])
         if 'credentials_json' in config:
             config['credentials_json'] = decrypt_value(config['credentials_json'])
+        if 'secret_key' in config:
+             config['secret_key'] = decrypt_value(config['secret_key'])
+        if 'access_key' in config:
+             config['access_key'] = decrypt_value(config['access_key'])
+        if 'account_key' in config:
+             config['account_key'] = decrypt_value(config['account_key'])
             
         if db_type in ['postgresql', 'mysql', 'sql_server', 'azure_sql']:
             connection_string = ETLService._build_connection_string(db_type, config)
@@ -665,20 +663,30 @@ class ETLService:
             project_id = config.get('project_id')
             dataset_id = config.get('dataset_id')
             
-            # Credentials handling
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                json.dump(json.loads(config['credentials_json']), f)
-                credentials_path = f.name
+        elif db_type == 'bigquery':
+            project_id = config.get('project_id')
+            dataset_id = config.get('dataset_id')
+            
+            # Credentials handling (Base64)
+            import base64
+            creds_json_str = config['credentials_json']
+            creds_b64 = base64.b64encode(creds_json_str.encode('utf-8')).decode('utf-8')
             
             # Configure Spark Context Hadoop Configuration for GCS independently
-            # This is required because GCS connector might not pick up bigquery options for internal writes
             try:
                 sc = df.sparkSession.sparkContext
                 hconf = sc._jsc.hadoopConfiguration()
+                
+                # Parse JSON for GCS auth (BigQuery write often uses GCS under hood)
+                import json
+                creds = json.loads(creds_json_str)
                 hconf.set("fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem")
                 hconf.set("fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS")
                 hconf.set("google.cloud.auth.service.account.enable", "true")
-                hconf.set("google.cloud.auth.service.account.json.keyfile", credentials_path)
+                hconf.set("fs.gs.auth.service.account.email", creds.get('client_email'))
+                hconf.set("fs.gs.auth.service.account.private.key", creds.get('private_key'))
+                hconf.set("fs.gs.auth.service.account.private.key.id", creds.get('private_key_id'))
+                
             except Exception as e:
                 print(f"Warning: Failed to set Hadoop configuration: {e}")
 
@@ -686,11 +694,10 @@ class ETLService:
             if project_id:
                 full_table_id = f"{project_id}.{full_table_id}"
             
-            # Use Direct Write method (Storage Write API) to avoid GCS dependency
-            # This simplifies setup as the user doesn't need a GCS bucket or GCS permissions.
+            # Use Direct Write method (Storage Write API)
             writer = df.write \
                 .format("bigquery") \
-                .option("credentialsFile", credentials_path) \
+                .option("credentials", creds_b64) \
                 .option("writeMethod", "direct")
             
             if project_id:
@@ -736,10 +743,14 @@ class ETLService:
             elif db_type == 'gcs':
                 # GCS Creds
                 if 'credentials_json' in config:
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                        json.dump(json.loads(config['credentials_json']), f)
-                        key_path = f.name
-                    conf.set("fs.gs.auth.service.account.json.keyfile", key_path)
+                     import json
+                     creds = json.loads(config['credentials_json'])
+                     conf.set("fs.gs.auth.service.account.email", creds.get('client_email'))
+                     conf.set("fs.gs.auth.service.account.private.key", creds.get('private_key'))
+                     conf.set("fs.gs.auth.service.account.private.key.id", creds.get('private_key_id'))
+                     conf.set("google.cloud.auth.service.account.enable", "true")
+                     # Unset keyfile to avoid conflict
+                     conf.unset("fs.gs.auth.service.account.json.keyfile")
                 
                 if not path.startswith("gs://"):
                     bucket = config.get('bucket')
@@ -770,11 +781,12 @@ class ETLService:
             raise ValueError(f"Unsupported sink database type: {db_type}")
 
     @staticmethod
-    async def get_sqlalchemy_connection_string(datasource_id: int, db_session) -> str:
+    async def get_sqlalchemy_engine(datasource_id: int, db_session):
         """
-        Get a SQLAlchemy connection string for a given datasource.
+        Get a SQLAlchemy Engine for a given datasource.
+        Avoids writing secrets to disk by passing credentials in memory where possible.
         """
-        from sqlalchemy import select
+        from sqlalchemy import select, create_engine
         from sqlalchemy.orm import joinedload
         from app.models.etl import ETLDataSource
         from app.core.security import decrypt_value
@@ -801,43 +813,38 @@ class ETLService:
         if 'credentials_json' in config:
             config['credentials_json'] = decrypt_value(config['credentials_json'])
 
+        url = ""
+        connect_args = {}
+
         if db_type == 'postgresql':
-            return f"postgresql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
+            url = f"postgresql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
         elif db_type == 'mysql':
-            return f"mysql+pymysql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
+            url = f"mysql+pymysql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
         elif db_type == 'sql_server':
-            return f"mssql+pymysql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
+            url = f"mssql+pymysql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
         elif db_type == 'bigquery':
-            import tempfile
-            
-            # Write credentials to a temp file
-            # We use a stable path based on datasource ID or a new temp file?
-            # Creating a new temp file each time might leak if not cleaned up, 
-            # but usually acceptable for this scale. 
-            # Ideally we'd cache the path but we're in a static method.
-            
-            try:
-                # Use a specific prefix to easily identify these files
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', prefix='bq_creds_', delete=False) as f:
-                    f.write(json.dumps(json.loads(config['credentials_json'])))
-                    credentials_path = f.name
-                    print(f"DEBUG: Written BigQuery credentials to {credentials_path}")
-                    
-                return f"bigquery://{config.get('project_id')}?credentials_path={credentials_path}"
-            except Exception as e:
-                print(f"Error handling BigQuery credentials: {e}")
-                # Fallback to default behavior (ADC) if this fails
-                return f"bigquery://{config.get('project_id')}"
+            url = f"bigquery://{config.get('project_id')}"
+            # Pass credentials info as dict directly to engine
+            if 'credentials_json' in config:
+                try:
+                    import json
+                    creds_dict = json.loads(config['credentials_json'])
+                    # 'credentials_info' is supported by pybigquery
+                    connect_args = {'credentials_info': creds_dict}
+                except Exception as e:
+                    print(f"Error parsing BQ credentials: {e}")
         else:
             raise ValueError(f"Unsupported database type for SQL Agent: {db_type}")
 
+        return create_engine(url, connect_args=connect_args)
+
     @staticmethod
-    async def execute_sql_query(connection_string: str, query: str) -> List[Dict[str, Any]]:
+    async def execute_sql_query(engine, query: str) -> List[Dict[str, Any]]:
         """
-        Execute raw SQL query and return results as list of dicts.
+        Execute raw SQL query using provided SQLAlchemy engine and return results as list of dicts.
         """
         import pandas as pd
-        from sqlalchemy import create_engine, text
+        from sqlalchemy import text
         from typing import List, Dict, Any
         
         # Helper to run synchronous SQL code in async wrapper if needed, 
@@ -845,9 +852,7 @@ class ETLService:
         # or wrap in run_in_executor.
         
         try:
-            # Create a localized engine/connection just for this query
             # We use pandas for easy DF conversion
-            engine = create_engine(connection_string)
             with engine.connect() as conn:
                 df = pd.read_sql(text(query), conn)
                 
