@@ -35,7 +35,7 @@ class ETLService:
             # Note: In production, i might submit jobs to a cluster.
             # Here i run local mode.
             builder = SparkSession.builder \
-                .appName("ChatbotETL") \
+                .appName("BuildTL") \
                 .master("local[*]") \
                 .config("spark.driver.memory", "2g") \
                 .config("spark.driver.host", "127.0.0.1") \
@@ -43,7 +43,11 @@ class ETLService:
                 .config("spark.jars", driver_path) \
                 .config("spark.hadoop.fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem") \
                 .config("spark.hadoop.fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS") \
-                .config("spark.hadoop.google.cloud.auth.service.account.enable", "true")
+                .config("spark.hadoop.google.cloud.auth.service.account.enable", "true") \
+                .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+                .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
+                .config("spark.hadoop.fs.azure", "org.apache.hadoop.fs.azure.NativeAzureFileSystem") \
+                .config("spark.hadoop.fs.abfss.impl", "org.apache.hadoop.fs.azurebfs.SecureAzureBlobFileSystem")
             
             cls._spark = builder.getOrCreate()
             
@@ -110,6 +114,62 @@ class ETLService:
                 print(f"Failed to download GCS connector: {e}")
         jars.append(gcs_jar)
 
+        # AWS S3 Support (Hadoop AWS + AWS SDK Bundle)
+        # Compatible with Spark 3.5 / Hadoop 3.3.4
+        hadoop_aws_jar = os.path.join(driver_dir, "hadoop-aws-3.3.4.jar")
+        aws_sdk_jar = os.path.join(driver_dir, "aws-java-sdk-bundle-1.12.262.jar")
+        
+        if not os.path.exists(hadoop_aws_jar):
+            print("Downloading Hadoop AWS jar...")
+            url = f"https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar"
+            try:
+                requests.get(url, stream=True).raise_for_status()
+                with open(hadoop_aws_jar, "wb") as f:
+                    f.write(requests.get(url).content)
+            except Exception as e:
+                print(f"Failed to download Hadoop AWS: {e}")
+        jars.append(hadoop_aws_jar)
+        
+        if not os.path.exists(aws_sdk_jar):
+            print("Downloading AWS SDK Bundle...")
+            url = f"https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar"
+            try:
+                requests.get(url, stream=True).raise_for_status()
+                with open(aws_sdk_jar, "wb") as f:
+                    f.write(requests.get(url).content)
+            except Exception as e:
+                print(f"Failed to download AWS SDK: {e}")
+        jars.append(aws_sdk_jar)
+        jars.append(aws_sdk_jar)
+
+        # Azure Data Lake Gen2 Support (Hadoop Azure)
+        hadoop_azure_jar = os.path.join(driver_dir, "hadoop-azure-3.3.4.jar")
+        # Azure needs azure-storage-blob or similar. Usually part of sdk bundle or separate.
+        # For simplicity, we'll try to rely on what's available or download minimal.
+        # Ideally we need: hadoop-azure + azure-storage
+        azure_storage_jar = os.path.join(driver_dir, "azure-storage-8.6.6.jar")
+
+        if not os.path.exists(hadoop_azure_jar):
+             print("Downloading Hadoop Azure...")
+             url = "https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-azure/3.3.4/hadoop-azure-3.3.4.jar"
+             try:
+                 requests.get(url, stream=True).raise_for_status()
+                 with open(hadoop_azure_jar, "wb") as f:
+                     f.write(requests.get(url).content)
+             except Exception as e:
+                 print(f"Failed to download Hadoop Azure: {e}")
+        jars.append(hadoop_azure_jar)
+        
+        if not os.path.exists(azure_storage_jar):
+             print("Downloading Azure Storage SDK...")
+             url = "https://repo1.maven.org/maven2/com/microsoft/azure/azure-storage/8.6.6/azure-storage-8.6.6.jar"
+             try:
+                 requests.get(url, stream=True).raise_for_status()
+                 with open(azure_storage_jar, "wb") as f:
+                     f.write(requests.get(url).content)
+             except Exception as e:
+                 print(f"Failed to download Azure Storage SDK: {e}")
+        jars.append(azure_storage_jar)
         return ",".join(jars)
 
     @staticmethod
@@ -194,6 +254,74 @@ class ETLService:
 
             df = reader.load(full_table_id)
             
+        elif db_type in ['s3', 'minio', 'gcs', 'adls']:
+            # Configure FileSystem
+            sc = spark.sparkContext
+            conf = sc._jsc.hadoopConfiguration()
+            
+            path = datasource.table_name
+            # Determine format based on extension (simple heuristic)
+            fmt = "parquet"
+            if path and path.endswith(".csv"): fmt = "csv"
+            elif path and path.endswith(".json"): fmt = "json"
+            elif path and path.endswith(".txt"): fmt = "text"
+            
+            if db_type in ['s3', 'minio']:
+                access_key = config.get('access_key')
+                secret_key = config.get('secret_key')
+                endpoint = config.get('endpoint')
+                
+                if access_key: conf.set("fs.s3a.access.key", access_key)
+                if secret_key: conf.set("fs.s3a.secret.key", secret_key)
+                if endpoint:
+                    conf.set("fs.s3a.endpoint", endpoint)
+                    conf.set("fs.s3a.path.style.access", "true")
+                
+                # Normalize path
+                if not path.startswith("s3a://"):
+                    bucket = config.get('bucket')
+                    if bucket and not path.startswith(bucket):
+                         path = f"s3a://{bucket}/{path.lstrip('/')}"
+                    else:
+                         path = f"s3a://{path}"
+
+            elif db_type == 'gcs':
+                # GCS Creds
+                if 'credentials_json' in config:
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                        json.dump(json.loads(config['credentials_json']), f)
+                        key_path = f.name
+                    conf.set("fs.gs.auth.service.account.json.keyfile", key_path)
+                
+                if not path.startswith("gs://"):
+                    bucket = config.get('bucket')
+                    if bucket and not path.startswith(bucket):
+                         path = f"gs://{bucket}/{path.lstrip('/')}"
+                    else:
+                          path = f"gs://{path}"
+                          
+            elif db_type == 'adls':
+                # Azure Data Lake Storage Gen2 (abfss://)
+                account_name = config.get('account_name')
+                account_key = config.get('account_key')
+                
+                if account_name and account_key:
+                    conf.set(f"fs.azure.account.key.{account_name}.dfs.core.windows.net", account_key)
+                
+                if not path.startswith("abfss://"):
+                    container = config.get('container') # 'bucket' equivalent
+                    if container and not path.startswith(container):
+                         path = f"abfss://{container}@{account_name}.dfs.core.windows.net/{path.lstrip('/')}"
+                    else:
+                         # Assume user provided full path or partial
+                         path = f"abfss://{path}@{account_name}.dfs.core.windows.net" if not "dfs.core.windows.net" in path else path
+                         
+            reader = spark.read.format(fmt)
+                         
+            reader = spark.read.format(fmt)
+            if fmt == "csv": reader = reader.option("header", "true").option("inferSchema", "true")
+            df = reader.load(path)
+
         else:
             raise ValueError(f"Unsupported database type: {db_type}")
 
@@ -250,9 +378,72 @@ class ETLService:
                     .option("user", config.get('username', '')) \
                     .option("password", config.get('password', '')) \
                     .load()
+                    
+            elif db_type in ['s3', 'minio', 'gcs']:
+                # Test Bucket Access
+                sc = spark.sparkContext
+                conf = sc._jsc.hadoopConfiguration()
                 
-                # Try to load one row to verify permissions
-                df.limit(1).collect()
+                test_path = table_name if table_name else ""
+                
+                if db_type in ['s3', 'minio']:
+                    if 'access_key' in config: conf.set("fs.s3a.access.key", config['access_key'])
+                    if 'secret_key' in config: conf.set("fs.s3a.secret.key", config['secret_key'])
+                    if 'endpoint' in config:
+                         conf.set("fs.s3a.endpoint", config['endpoint'])
+                         conf.set("fs.s3a.path.style.access", "true")
+                         
+                    if not test_path:
+                        bucket = config.get('bucket')
+                        test_path = f"s3a://{bucket}/" if bucket else "s3a:///"
+                    elif not test_path.startswith("s3a://"):
+                        test_path = f"s3a://{test_path}"
+
+                elif db_type == 'gcs':
+                    if 'credentials_json' in config:
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                            json.dump(json.loads(config['credentials_json']), f)
+                            key_path = f.name
+                        conf.set("fs.gs.auth.service.account.json.keyfile", key_path)
+                    
+                    if not test_path:
+                        bucket = config.get('bucket')
+                        test_path = f"gs://{bucket}/" if bucket else "gs:///"
+                    elif not test_path.startswith("gs://"):
+                        test_path = f"gs://{test_path}"
+
+                elif db_type == 'adls':
+                    account_name = config.get('account_name')
+                    account_key = config.get('account_key')
+                    if account_name and account_key:
+                        conf.set(f"fs.azure.account.key.{account_name}.dfs.core.windows.net", account_key)
+                    
+                    if not test_path:
+                        container = config.get('container')
+                        test_path = f"abfss://{container}@{account_name}.dfs.core.windows.net/" if container else f"abfss://@{account_name}.dfs.core.windows.net/"
+                    elif "dfs.core.windows.net" not in test_path:
+                         container = config.get('container')
+                         test_path = f"abfss://{container}@{account_name}.dfs.core.windows.net/{test_path}"
+
+                # Validate connection
+                if table_name:
+                     # If specific file/folder provided, try to read schema/first row
+                     fmt = "parquet"
+                     if table_name.endswith(".csv"): fmt = "csv"
+                     elif table_name.endswith(".json"): fmt = "json"
+                     elif table_name.endswith(".txt"): fmt = "text"
+                     
+                     spark.read.format(fmt).load(test_path).limit(1).collect()
+                else:
+                     # If only bucket/container provided, check access by listing status
+                     # This ensures credentials are valid even without reading a specific file
+                     try:
+                         Path = sc._gateway.jvm.org.apache.hadoop.fs.Path
+                         fs = Path(test_path).getFileSystem(conf)
+                         fs.listStatus(Path(test_path))
+                     except Exception as e:
+                         # Enhance error message
+                         raise Exception(f"Failed to access bucket/container: {str(e)}")
                 
             elif db_type == 'bigquery':
                 project_id = config.get('project_id')
@@ -508,6 +699,73 @@ class ETLService:
             # Save mode
             writer.mode(mode).save(full_table_id)
             
+            # Save mode
+            writer.mode(mode).save(full_table_id)
+
+        elif db_type in ['s3', 'minio', 'gcs', 'adls']:
+            # Configure FileSystem
+            sc = df.sparkSession.sparkContext
+            conf = sc._jsc.hadoopConfiguration()
+            
+            path = table_name
+            # Determine format
+            fmt = "parquet"
+            if path and path.endswith(".csv"): fmt = "csv"
+            elif path and path.endswith(".json"): fmt = "json"
+            elif path and path.endswith(".txt"): fmt = "text"
+            
+            if db_type in ['s3', 'minio']:
+                access_key = config.get('access_key')
+                secret_key = config.get('secret_key')
+                endpoint = config.get('endpoint')
+                
+                if access_key: conf.set("fs.s3a.access.key", access_key)
+                if secret_key: conf.set("fs.s3a.secret.key", secret_key)
+                if endpoint:
+                    conf.set("fs.s3a.endpoint", endpoint)
+                    conf.set("fs.s3a.path.style.access", "true")
+                
+                # Normalize path
+                if not path.startswith("s3a://"):
+                    bucket = config.get('bucket')
+                    if bucket and not path.startswith(bucket):
+                         path = f"s3a://{bucket}/{path.lstrip('/')}"
+                    else:
+                         path = f"s3a://{path}"
+
+            elif db_type == 'gcs':
+                # GCS Creds
+                if 'credentials_json' in config:
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                        json.dump(json.loads(config['credentials_json']), f)
+                        key_path = f.name
+                    conf.set("fs.gs.auth.service.account.json.keyfile", key_path)
+                
+                if not path.startswith("gs://"):
+                    bucket = config.get('bucket')
+                    if bucket and not path.startswith(bucket):
+                         path = f"gs://{bucket}/{path.lstrip('/')}"
+                    else:
+                         path = f"gs://{path}"
+
+            elif db_type == 'adls':
+                account_name = config.get('account_name')
+                account_key = config.get('account_key')
+                
+                if account_name and account_key:
+                    conf.set(f"fs.azure.account.key.{account_name}.dfs.core.windows.net", account_key)
+                
+                if not path.startswith("abfss://"):
+                    container = config.get('container') 
+                    if container and not path.startswith(container):
+                         path = f"abfss://{container}@{account_name}.dfs.core.windows.net/{path.lstrip('/')}"
+                    else:
+                         path = f"abfss://{path}@{account_name}.dfs.core.windows.net" if not "dfs.core.windows.net" in path else path
+            
+            writer = df.write.format(fmt).mode(mode)
+            if fmt == "csv": writer = writer.option("header", "true")
+            writer.save(path)
+            
         else:
             raise ValueError(f"Unsupported sink database type: {db_type}")
 
@@ -653,7 +911,7 @@ class ETLService:
                 
             # 3. Execute Nodes Recursively
             spark = ETLService.get_spark_session()
-            await ETLService._execute_graph_nodes(G, execution_order, spark, db_session)
+            await ETLService._execute_graph_nodes(G, execution_order, spark, db_session, initial_results=None, pipeline_id=pipeline_id)
                         
             # Mark Success
             execution.status = "completed"
@@ -679,7 +937,7 @@ class ETLService:
             raise e
 
     @staticmethod
-    async def _execute_graph_nodes(G, execution_order, spark, db_session, initial_results=None):
+    async def _execute_graph_nodes(G, execution_order, spark, db_session, initial_results=None, pipeline_id: int = None):
         """
         Execute a set of nodes in a graph.
         initial_results: dict mapping node_id -> DataFrame (for injecting inputs into child pipelines)
@@ -737,6 +995,16 @@ class ETLService:
                 if not generated_code:
                         raise ValueError(f"Transform node {node_id} has no generated code")
                 
+                # Check if there was schema change in the source tables
+                generated_code = await ETLService.check_schema_changes(
+                    node_id,
+                    node_data,
+                    input_dfs,
+                    generated_code,
+                    db_session,
+                    pipeline_id
+                )
+
                 # Execute transformation
                 import pyspark.sql.functions as F
                 import pyspark.sql.types as T
@@ -914,4 +1182,139 @@ Write the 'transform' function.
         # Clean markdown if present
         code = content.replace("```python", "").replace("```", "").strip()
         
+        return code
+
+    @staticmethod
+    async def check_schema_changes(
+        node_id: str,
+        node_data: Dict[str, Any],
+        input_dfs: Dict[str, Any],
+        current_code: str,
+        db_session=None,
+        pipeline_id: int = None
+    ) -> str:
+        """
+        Validates schema and triggers auto-heal if needed. 
+        Returns valid code (original or fixed).
+        """
+        from app.models.etl import ETLPipeline
+        import json
+
+        saved_schema = node_data.get('sourceSchema')
+        if not saved_schema:
+            return current_code
+
+        live_schema = {}
+        for t_name, df_in in input_dfs.items():
+            live_schema[t_name] = {f.name: str(f.dataType) for f in df_in.schema.fields}
+        
+        if json.dumps(saved_schema, sort_keys=True) == json.dumps(live_schema, sort_keys=True):
+            return current_code
+
+        print(f"DEBUG: Schema mismatch detected for node {node_id}. Attempting Auto-Heal...")
+        try:
+            new_code = await ETLService.fix_transformation_code(
+                current_code,
+                saved_schema,
+                live_schema
+            )
+            print(f"DEBUG: Auto-Heal successful.")
+            
+            # Persist if possible
+            if db_session and pipeline_id:
+                try:
+                    pipeline = await db_session.get(ETLPipeline, pipeline_id)
+                    if pipeline and pipeline.nodes:
+                        updated_nodes = list(pipeline.nodes)
+                        for idx, n in enumerate(updated_nodes):
+                            if n['id'] == node_id:
+                                n['data']['generatedCode'] = new_code
+                                n['data']['sourceSchema'] = live_schema
+                                updated_nodes[idx] = n
+                                break
+                        
+                        pipeline.nodes = updated_nodes
+                        from sqlalchemy.orm.attributes import flag_modified
+                        flag_modified(pipeline, "nodes")
+                        await db_session.commit()
+                        print(f"DEBUG: Persisted auto-healed code to DB.")
+                except Exception as db_err:
+                    print(f"WARNING: Failed to persist auto-heal to DB: {db_err}")
+            
+            return new_code
+
+        except Exception as heal_err:
+            print(f"WARNING: Auto-Heal failed: {heal_err}. Proceeding with original code.")
+            return current_code
+
+    @staticmethod
+    async def fix_transformation_code(
+        current_code: str,
+        old_schema: Dict[str, Dict[str, str]],
+        new_schema: Dict[str, Dict[str, str]],
+        model_name: str = "gpt-4o",
+        api_key: str = None
+    ) -> str:
+        """
+        Refactor PySpark code to adapt to schema changes using LLM.
+        """
+        from app.services.llm_models import LLMModelFactory
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        factory = LLMModelFactory()
+        llm = factory.create_llm(
+            model_name=model_name,
+            temperature=0.1,
+            max_tokens=2000,
+            api_key=api_key
+        )
+
+        # Format schemas
+        def format_schema(schemas):
+            lines = []
+            for table, schema in schemas.items():
+                lines.append(f"Table '{table}':")
+                for col, type_ in schema.items():
+                    lines.append(f"  - {col}: {type_}")
+            return "\n".join(lines)
+
+        old_desc = format_schema(old_schema)
+        new_desc = format_schema(new_schema)
+
+        system_prompt = """You are an expert PySpark Data Engineer.
+Your task is to REFACTOR an existing PySpark transformation function to work with a CHANGED schema.
+
+The goal is to preserve the original logic/intent while fixing column references or types that have changed.
+
+The function signature MUST remain:
+def transform(spark, input_dfs):
+
+1. Return ONLY the python function code. No markdown formatting, no explanations.
+2. Assume standard imports (pyspark.sql.functions as F, types as T) are available.
+3. If a column was renamed, update the reference. If a column was deleted, handle it gracefully or remove the logic if impossible.
+"""
+
+        user_message = f"""
+Existing Code:
+{current_code}
+
+OLD Schema:
+{old_desc}
+
+NEW Schema:
+{new_desc}
+
+Please fix the code to match the NEW Schema.
+"""
+
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_message)
+        ]
+
+        response = await llm.ainvoke(messages)
+        content = response.content
+        
+        # Clean markdown
+        code = content.replace("```python", "").replace("```", "").strip()
         return code

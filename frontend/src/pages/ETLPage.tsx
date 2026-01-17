@@ -44,6 +44,7 @@ type NodeData = {
     tableName?: string;
     selectedColumns?: string[];
     generatedCode?: string;
+    sourceSchema?: any;
     writeMode?: string;
     onDelete?: () => void;
     pipelineId?: number; // For pipeline nodes
@@ -216,6 +217,7 @@ export default function ETLPage() {
     const handleSaveTransformConfig = (config: {
         prompt: string;
         generatedCode: string;
+        sourceSchema?: any;
     }) => {
         if (activeTransformNodeId) {
             setNodes((nds) => nds.map((node) => {
@@ -226,6 +228,7 @@ export default function ETLPage() {
                             ...node.data,
                             prompt: config.prompt,
                             generatedCode: config.generatedCode,
+                            sourceSchema: config.sourceSchema,
                             label: config.prompt.substring(0, 30) + (config.prompt.length > 30 ? '...' : ''),
                         }
                     };

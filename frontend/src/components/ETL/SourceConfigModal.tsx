@@ -47,6 +47,9 @@ const DB_TYPES = [
     { value: 'sql_server', label: 'SQL Server' },
     { value: 'azure_sql', label: 'Azure SQL Database' },
     { value: 'bigquery', label: 'Google BigQuery' },
+    { value: 's3', label: 'AWS S3 / MinIO' },
+    { value: 'gcs', label: 'Google Cloud Storage' },
+    { value: 'adls', label: 'Azure Data Lake Gen2' },
 ];
 
 export const SourceConfigModal: React.FC<SourceConfigModalProps> = ({
@@ -357,14 +360,78 @@ export const SourceConfigModal: React.FC<SourceConfigModalProps> = ({
                             <textarea value={connectionConfig.credentials_json || ''} onChange={e => updateConfig('credentials_json', e.target.value)} className="w-full glass-input p-2 rounded-lg font-mono text-xs" rows={4} />
                         </div>
                     </>
-                )}
+                )
+                }
 
-                {connectionStatus.message && (
-                    <div className={`p-3 rounded-xl flex items-center gap-2 ${connectionStatus.success ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
-                        {connectionStatus.success ? <Check className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-                        <span className="text-sm">{connectionStatus.message}</span>
-                    </div>
-                )}
+                {
+                    dbType === 's3' && (
+                        <>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Access Key</label>
+                                    <input type="text" value={connectionConfig.access_key || ''} onChange={e => updateConfig('access_key', e.target.value)} className="w-full glass-input p-2 rounded-lg" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Secret Key</label>
+                                    <input type="password" value={connectionConfig.secret_key || ''} onChange={e => updateConfig('secret_key', e.target.value)} className="w-full glass-input p-2 rounded-lg" />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">Endpoint (Optional for AWS, Required for MinIO)</label>
+                                <input type="text" value={connectionConfig.endpoint || ''} onChange={e => updateConfig('endpoint', e.target.value)} className="w-full glass-input p-2 rounded-lg" placeholder="https://minio.example.com" />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">Bucket Name</label>
+                                <input type="text" value={connectionConfig.bucket || ''} onChange={e => updateConfig('bucket', e.target.value)} className="w-full glass-input p-2 rounded-lg" placeholder="my-data-bucket" />
+                            </div>
+                        </>
+                    )
+                }
+
+                {
+                    dbType === 'gcs' && (
+                        <>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">Bucket Name (Default)</label>
+                                <input type="text" value={connectionConfig.bucket || ''} onChange={e => updateConfig('bucket', e.target.value)} className="w-full glass-input p-2 rounded-lg" placeholder="my-gcs-bucket" />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">Service Account JSON</label>
+                                <textarea value={connectionConfig.credentials_json || ''} onChange={e => updateConfig('credentials_json', e.target.value)} className="w-full glass-input p-2 rounded-lg font-mono text-xs" rows={4} />
+                            </div>
+                        </>
+                    )
+                }
+
+                {
+                    dbType === 'adls' && (
+                        <>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Storage Account Name</label>
+                                    <input type="text" value={connectionConfig.account_name || ''} onChange={e => updateConfig('account_name', e.target.value)} className="w-full glass-input p-2 rounded-lg" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Account Key</label>
+                                    <input type="password" value={connectionConfig.account_key || ''} onChange={e => updateConfig('account_key', e.target.value)} className="w-full glass-input p-2 rounded-lg" />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">Container Name</label>
+                                <input type="text" value={connectionConfig.container || ''} onChange={e => updateConfig('container', e.target.value)} className="w-full glass-input p-2 rounded-lg" />
+                            </div>
+                        </>
+                    )
+                }
+
+                {
+                    connectionStatus.message && (
+                        <div className={`p-3 rounded-xl flex items-center gap-2 ${connectionStatus.success ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
+                            {connectionStatus.success ? <Check className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                            <span className="text-sm">{connectionStatus.message}</span>
+                        </div>
+                    )
+                }
 
                 <div className="flex gap-3 pt-2">
                     <button onClick={() => setStep('select-linked-service')} className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg">Back</button>
@@ -375,7 +442,7 @@ export const SourceConfigModal: React.FC<SourceConfigModalProps> = ({
                         Create Service
                     </button>
                 </div>
-            </div>
+            </div >
         );
     };
 
@@ -464,8 +531,16 @@ export const SourceConfigModal: React.FC<SourceConfigModalProps> = ({
                                     <input type="text" value={datasetName} onChange={e => setDatasetName(e.target.value)} className="w-full glass-input p-3 rounded-xl outline-none" placeholder="Users Table" />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">Source Table Name</label>
-                                    <input type="text" value={tableName} onChange={e => setTableName(e.target.value)} className="w-full glass-input p-3 rounded-xl outline-none" placeholder="users" />
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
+                                        {['s3', 'gcs', 'adls', 'minio'].includes(
+                                            linkedServices.find(s => s.id === selectedLinkedServiceId)?.service_type || ''
+                                        ) ? "File Path (e.g. data/users.csv or folder/)" : "Source Table Name"}
+                                    </label>
+                                    <input type="text" value={tableName} onChange={e => setTableName(e.target.value)} className="w-full glass-input p-3 rounded-xl outline-none" placeholder={
+                                        ['s3', 'gcs', 'adls', 'minio'].includes(
+                                            linkedServices.find(s => s.id === selectedLinkedServiceId)?.service_type || ''
+                                        ) ? "folder/file.parquet" : "users"
+                                    } />
                                 </div>
                                 <div className="flex gap-3 pt-4">
                                     <button onClick={() => setStep('select-linked-service')} className="px-4 py-3 bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/20 text-slate-900 dark:text-white rounded-xl">Back</button>
