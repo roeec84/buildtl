@@ -127,14 +127,16 @@ async def send_message(
                 # Use SQL Agent
                 print(f"DEBUG: Using SQL Agent for {datasource.name}")
                 try:
-                    conn_string = await ETLService.get_sqlalchemy_connection_string(datasource.id, db)
+
+                    engine = await ETLService.get_sqlalchemy_engine(datasource.id, db)
                     # Mask password for logs
-                    masked_conn = conn_string.replace(conn_string.split(':')[2].split('@')[0], '******') if '@' in conn_string else conn_string
-                    print(f"DEBUG: Connection String: {masked_conn}")
+                    conn_info = str(engine.url)
+                    masked_conn = conn_info.replace(conn_info.split(':')[2].split('@')[0], '******') if '@' in conn_info else conn_info
+                    print(f"DEBUG: Connection Engine: {masked_conn}")
                     
                     response_content, formatted_history = await llm_service.generate_response_with_sql_agent(
                         user_message=request.message,
-                        connection_string=conn_string,
+                        engine=engine,
                         conversation_history=message_history
                     )
                 except Exception as e:
@@ -357,9 +359,10 @@ async def generate_chart(
                 content=request.message
             )
             db.add(user_msg)
+            db.add(user_msg)
             await db.commit()
 
-        conn_string = await ETLService.get_sqlalchemy_connection_string(request.dataSourceId, db)
+        engine = await ETLService.get_sqlalchemy_engine(request.dataSourceId, db)
 
         result = await db.execute(
             select(ModelSetting)

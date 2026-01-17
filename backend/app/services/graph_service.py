@@ -9,7 +9,7 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages] 
     user_id: str
     dashboard_id: Optional[str]
-    connection_string: Optional[str]
+    connection_string: Any # SQLAlchemy Engine
     llm_service: Any
     
     sql_query: Optional[str]
@@ -78,7 +78,7 @@ async def sql_generator_node(state: AgentState):
     
     sql = await llm_service.generate_sql_query(
         user_message=str(last_message),
-        connection_string=state["connection_string"]
+        engine=state["connection_string"]
     )
     
     return {"sql_query": sql, "next_step": "sql_exec"}
@@ -88,18 +88,15 @@ async def sql_executor_node(state: AgentState):
     Executes SQL against logic.
     Transition: -> chart_gen (success) or error (failure)
     """
-    from sqlalchemy import create_engine
-    from sqlalchemy import text
+    from app.services.etl_service import ETLService
     
     sql = state.get("sql_query")
     if not sql:
         return {"error": "No SQL generated", "next_step": "error"}
         
     try:
-        engine = create_engine(state["connection_string"])
-        with engine.connect() as conn:
-            result = conn.execute(text(sql))
-            rows = [dict(row._mapping) for row in result]
+        engine = state["connection_string"]
+        rows = await ETLService.execute_sql_query(engine, sql)
             
         return {"query_result": rows, "next_step": "chart_gen", "error": None}
     except Exception as e:

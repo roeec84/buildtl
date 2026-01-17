@@ -86,8 +86,12 @@ async def create_linked_service(
 ):
     # Basic encryption for sensitive fields
     secure_config = data.connection_config.copy()
-    if "password" in secure_config:
-        secure_config["password"] = encrypt_value(secure_config["password"])
+    # Encrypt all sensitive fields
+    secure_config = data.connection_config.copy()
+    sensitive_keys = ["password", "secret_key", "account_key", "access_key", "credentials_json"]
+    for key in sensitive_keys:
+        if key in secure_config and secure_config[key]:
+             secure_config[key] = encrypt_value(secure_config[key])
     
     ls = LinkedService(
         user_id=current_user.id,
@@ -115,25 +119,9 @@ async def test_linked_service_connection(
     current_user: User = Depends(get_current_active_user)
 ):
     from app.services.etl_service import ETLService
-    # For testing, we just check minimal connectivity. 
-    # Logic in service might try to query meta-tables or just "SELECT 1".
-    # Since we don't have a table name here, our current test_connection expects a table_name.
-    # I should update ETLService.test_connection to handle optional table_name or check `SELECT 1`.
-    
-    # Passing dummy table name or updating service?
-    # Better to update service later. For now, try checking without table if supported?
-    # Or for SQL, use a dummy query.
-    
-    # Let's assume user provides a table for dataset creation test, but for Linked Service?
-    # Linked Service is connection only. 
-    # Postgres/MySQL: can connect without table.
-    # BigQuery: Needs project/dataset.
-    
-    # I will pass "1" or None as table_name and handle in service.
     success, message = await ETLService.test_connection(data.service_type, data.connection_config, table_name=None)
     return {"success": success, "message": message}
 
-# --- Data Source Endpoints ---
 
 @router.post("/datasources", response_model=ETLDataSourceResponse, status_code=status.HTTP_201_CREATED)
 async def create_etl_data_source(
