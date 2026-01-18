@@ -173,52 +173,142 @@ class ETLService:
         return ",".join(jars)
 
     @staticmethod
+    def _decrypt_config(config: dict) -> dict:
+        """
+        Decrypt sensitive fields in the configuration dictionary.
+        """
+        from app.core.security import decrypt_value
+        config = config.copy()
+        sensitive_keys = ["password", "secret_key", "account_key", "access_key", "credentials_json"]
+        
+        def is_encrypted(s):
+            return isinstance(s, str) and s.startswith('gAAAA')
+
+        for key in sensitive_keys:
+            if key in config and is_encrypted(config[key]):
+                config[key] = decrypt_value(config[key])
+        return config
+
+    @staticmethod
+    def _build_connection_string(db_type: str, config: dict) -> str:
+        """
+        Build SQLAlchemy connection string from config.
+        """
+        if db_type == 'postgresql':
+            return f"postgresql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
+        elif db_type == 'mysql':
+            return f"mysql+pymysql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
+        elif db_type in ['sql_server', 'azure_sql']:
+            return f"mssql+pymysql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
+        return ""
+
+    @staticmethod
+    def _get_jdbc_url(db_type: str, config: dict) -> str:
+        """
+        Construct JDBC URL from configuration.
+        """
+        connection_string = ETLService._build_connection_string(db_type, config)
+        if db_type == 'postgresql':
+            return connection_string.replace('postgresql://', 'jdbc:postgresql://')
+        elif db_type == 'mysql':
+            return connection_string.replace('mysql+pymysql://', 'jdbc:mysql://')
+        elif db_type in ['sql_server', 'azure_sql']:
+            return connection_string.replace('mssql+pyodbc://', 'jdbc:sqlserver://')
+        return connection_string
+
+    @staticmethod
+    def _configure_cloud_storage(sc, db_type: str, config: dict) -> None:
+        """
+        Configure Spark Hadoop/FileSystem context for cloud storage.
+        """
+        conf = sc._jsc.hadoopConfiguration()
+        
+        if db_type in ['s3', 'minio']:
+            if 'access_key' in config: conf.set("fs.s3a.access.key", config['access_key'])
+            if 'secret_key' in config: conf.set("fs.s3a.secret.key", config['secret_key'])
+            if 'endpoint' in config:
+                 conf.set("fs.s3a.endpoint", config['endpoint'])
+                 conf.set("fs.s3a.path.style.access", "true")
+
+        elif db_type == 'gcs':
+            if 'credentials_json' in config:
+                 import json
+                 creds = json.loads(config['credentials_json'])
+                 conf.set("fs.gs.auth.service.account.email", creds.get('client_email'))
+                 conf.set("fs.gs.auth.service.account.private.key", creds.get('private_key'))
+                 conf.unset("fs.gs.auth.service.account.json.keyfile")
+                 conf.set("fs.gs.auth.service.account.private.key.id", creds.get('private_key_id'))
+                 conf.set("google.cloud.auth.service.account.enable", "true")
+
+        elif db_type == 'adls':
+            account_name = config.get('account_name')
+            account_key = config.get('account_key')
+            if account_name and account_key:
+                conf.set(f"fs.azure.account.key.{account_name}.dfs.core.windows.net", account_key)
+
+    @staticmethod
+    def _normalize_path(db_type: str, path: str, config: dict) -> str:
+        """
+        Normalize cloud storage paths to include protocol and bucket/container.
+        """
+        path = path.lstrip('/') if path else ""
+        
+        if db_type in ['s3', 'minio']:
+            if not path.startswith("s3a://"):
+                bucket = config.get('bucket')
+                if bucket and not path.startswith(bucket):
+                     return f"s3a://{bucket}/{path}"
+                return f"s3a://{path}"
+        
+        elif db_type == 'gcs':
+            if not path.startswith("gs://"):
+                bucket = config.get('bucket')
+                if bucket and not path.startswith(bucket):
+                     return f"gs://{bucket}/{path}"
+                return f"gs://{path}"
+        
+        elif db_type == 'adls':
+            account_name = config.get('account_name')
+            if not path.startswith("abfss://"):
+                container = config.get('container')
+                if container and not path.startswith(container):
+                     return f"abfss://{container}@{account_name}.dfs.core.windows.net/{path}"
+                # Assume full container path or just container
+                path_suffix = f"@{account_name}.dfs.core.windows.net"
+                if path_suffix not in path:
+                     return f"abfss://{path}{path_suffix}"
+                return f"abfss://{path}"
+                
+        return path
+
+    @staticmethod
     def load_source_data(datasource, selected_columns, limit=None):
         """
         Load data from a source datasource with selected columns.
         Returns a Spark DataFrame.
         """
         from pyspark.sql import SparkSession
-        from app.core.security import decrypt_value
-        import tempfile
-        import json
+        import base64
         
         spark = ETLService.get_spark_session()
         
         # Access Linked Service
-        # Ensure linked_service is loaded (caller responsibility)
         ls = datasource.linked_service
         if not ls:
              raise ValueError("Linked Service not found for data source")
              
         db_type = ls.service_type
-        config = ls.connection_config.copy()
-        
-        # Decrypt sensitive fields
-        sensitive_keys = ["password", "secret_key", "account_key", "access_key", "credentials_json"]
-        for key in sensitive_keys:
-            if key in config:
-                config[key] = decrypt_value(config[key])
-            config['credentials_json'] = decrypt_value(config['credentials_json'])
+        # Helper: Decrypt config
+        config = ETLService._decrypt_config(ls.connection_config)
         
         # JDBC Sources
         if db_type in ['postgresql', 'mysql', 'sql_server', 'azure_sql']:
-            table_name = datasource.table_name
-            connection_string = ETLService._build_connection_string(db_type, config)
+            jdbc_url = ETLService._get_jdbc_url(db_type, config)
             
-            # Parse connection string to get JDBC URL
-            if db_type == 'postgresql':
-                jdbc_url = connection_string.replace('postgresql://', 'jdbc:postgresql://')
-            elif db_type == 'mysql':
-                jdbc_url = connection_string.replace('mysql+pymysql://', 'jdbc:mysql://')
-            elif db_type in ['sql_server', 'azure_sql']:
-                jdbc_url = connection_string.replace('mssql+pyodbc://', 'jdbc:sqlserver://')
-            
-            # Load data
             df = spark.read \
                 .format("jdbc") \
                 .option("url", jdbc_url) \
-                .option("dbtable", table_name) \
+                .option("dbtable", datasource.table_name) \
                 .option("user", config.get('username', '')) \
                 .option("password", config.get('password', '')) \
                 .load()
@@ -228,17 +318,8 @@ class ETLService:
             dataset_id = config.get('dataset_id')
             table_id = datasource.table_name
             
-            # Configure BigQuery read with Base64 credentials
-            # Requires spark-bigquery-connector 0.25+ or so
-            import base64
-            
-            creds_json_str = config['credentials_json']
-            if isinstance(creds_json_str, str):
-                # Ensure it is a valid JSON string
-                pass 
-            
             # Base64 encode the JSON
-            creds_b64 = base64.b64encode(creds_json_str.encode('utf-8')).decode('utf-8')
+            creds_b64 = base64.b64encode(config['credentials_json'].encode('utf-8')).decode('utf-8')
             
             full_table_id = f"{dataset_id}.{table_id}"
             if project_id:
@@ -251,7 +332,6 @@ class ETLService:
                 .option("credentials", creds_b64)
             
             if project_id:
-                 # Set parent project for billing
                  reader = reader.option("parentProject", project_id)
 
             df = reader.load(full_table_id)
@@ -259,69 +339,17 @@ class ETLService:
         elif db_type in ['s3', 'minio', 'gcs', 'adls']:
             # Configure FileSystem
             sc = spark.sparkContext
-            conf = sc._jsc.hadoopConfiguration()
+            ETLService._configure_cloud_storage(sc, db_type, config)
             
-            path = datasource.table_name
-            # Determine format based on extension (simple heuristic)
+            # Normalize Path
+            path = ETLService._normalize_path(db_type, datasource.table_name, config)
+            
+            # Determine format
             fmt = "parquet"
-            if path and path.endswith(".csv"): fmt = "csv"
-            elif path and path.endswith(".json"): fmt = "json"
-            elif path and path.endswith(".txt"): fmt = "text"
+            if path.endswith(".csv"): fmt = "csv"
+            elif path.endswith(".json"): fmt = "json"
+            elif path.endswith(".txt"): fmt = "text"
             
-            if db_type in ['s3', 'minio']:
-                access_key = config.get('access_key')
-                secret_key = config.get('secret_key')
-                endpoint = config.get('endpoint')
-                
-                if access_key: conf.set("fs.s3a.access.key", access_key)
-                if secret_key: conf.set("fs.s3a.secret.key", secret_key)
-                if endpoint:
-                    conf.set("fs.s3a.endpoint", endpoint)
-                    conf.set("fs.s3a.path.style.access", "true")
-                
-                # Normalize path
-                if not path.startswith("s3a://"):
-                    bucket = config.get('bucket')
-                    if bucket and not path.startswith(bucket):
-                         path = f"s3a://{bucket}/{path.lstrip('/')}"
-                    else:
-                         path = f"s3a://{path}"
-
-            elif db_type == 'gcs':
-                # GCS Creds
-                if 'credentials_json' in config:
-                     import json
-                     creds = json.loads(config['credentials_json'])
-                     conf.set("fs.gs.auth.service.account.email", creds.get('client_email'))
-                     conf.set("fs.gs.auth.service.account.private.key", creds.get('private_key'))
-                     conf.set("fs.gs.auth.service.account.private.key.id", creds.get('private_key_id'))
-                     conf.set("google.cloud.auth.service.account.enable", "true")
-                     # Unset keyfile to avoid conflict
-                     conf.unset("fs.gs.auth.service.account.json.keyfile")
-                
-                if not path.startswith("gs://"):
-                    bucket = config.get('bucket')
-                    if bucket and not path.startswith(bucket):
-                         path = f"gs://{bucket}/{path.lstrip('/')}"
-                    else:
-                          path = f"gs://{path}"
-                          
-            elif db_type == 'adls':
-                # Azure Data Lake Storage Gen2 (abfss://)
-                account_name = config.get('account_name')
-                account_key = config.get('account_key')
-                
-                if account_name and account_key:
-                    conf.set(f"fs.azure.account.key.{account_name}.dfs.core.windows.net", account_key)
-                
-                if not path.startswith("abfss://"):
-                    container = config.get('container') # 'bucket' equivalent
-                    if container and not path.startswith(container):
-                         path = f"abfss://{container}@{account_name}.dfs.core.windows.net/{path.lstrip('/')}"
-                    else:
-                         # Assume user provided full path or partial
-                         path = f"abfss://{path}@{account_name}.dfs.core.windows.net" if not "dfs.core.windows.net" in path else path
-                         
             reader = spark.read.format(fmt)
             if fmt == "csv": reader = reader.option("header", "true").option("inferSchema", "true")
             df = reader.load(path)
@@ -331,7 +359,6 @@ class ETLService:
 
         # Common post-processing
         if selected_columns:
-            # Verify columns exist (case sensitivity might be an issue)
             df = df.select(*selected_columns)
         
         if limit:
@@ -345,123 +372,74 @@ class ETLService:
         Test connection to a datasource configuration.
         Returns (success, message).
         """
-        from app.core.security import decrypt_value
-        import tempfile
-        import json
-        
         try:
             spark = ETLService.get_spark_session()
-            config = connection_config.copy()
+            # Helper: Decrypt config
+            config = ETLService._decrypt_config(connection_config)
             
-            # Decrypt if keys look encrypted (starts with gAAAA...)
-            def is_encrypted(s):
-                return isinstance(s, str) and s.startswith('gAAAA')
-
-            if 'password' in config and is_encrypted(config['password']):
-                 config['password'] = decrypt_value(config['password'])
-            if 'credentials_json' in config and is_encrypted(config['credentials_json']):
-                 config['credentials_json'] = decrypt_value(config['credentials_json'])
-            if 'secret_key' in config and is_encrypted(config['secret_key']):
-                 config['secret_key'] = decrypt_value(config['secret_key'])
-            if 'access_key' in config and is_encrypted(config['access_key']):
-                 config['access_key'] = decrypt_value(config['access_key'])
-            if 'account_key' in config and is_encrypted(config['account_key']):
-                 config['account_key'] = decrypt_value(config['account_key'])
-
             if db_type in ['postgresql', 'mysql', 'sql_server', 'azure_sql']:
-                # Build JDBC URL
-                if db_type == 'postgresql':
-                    url = f"jdbc:postgresql://{config.get('host', 'localhost')}:{config.get('port', 5432)}/{config.get('database', '')}"
-                elif db_type == 'mysql':
-                    url = f"jdbc:mysql://{config.get('host', 'localhost')}:{config.get('port', 3306)}/{config.get('database', '')}"
-                elif db_type in ['sql_server', 'azure_sql']:
-                    url = f"jdbc:sqlserver://{config.get('server')};databaseName={config.get('database')}"
-                
-                # Use dummy query if no table specified
+                jdbc_url = ETLService._get_jdbc_url(db_type, config)
                 target_table = table_name if table_name else "(SELECT 1) as test_connection"
                 
-                df = spark.read \
+                spark.read \
                     .format("jdbc") \
-                    .option("url", url) \
+                    .option("url", jdbc_url) \
                     .option("dbtable", target_table) \
                     .option("user", config.get('username', '')) \
                     .option("password", config.get('password', '')) \
-                    .load()
+                    .load() \
+                    .limit(1).collect()
                     
-            elif db_type in ['s3', 'minio', 'gcs']:
-                # Test Bucket Access
+            elif db_type in ['s3', 'minio', 'gcs', 'adls']:
+                # Configure Cloud Storage
                 sc = spark.sparkContext
-                conf = sc._jsc.hadoopConfiguration()
+                ETLService._configure_cloud_storage(sc, db_type, config)
                 
                 test_path = table_name if table_name else ""
-                
-                if db_type in ['s3', 'minio']:
-                    if 'access_key' in config: conf.set("fs.s3a.access.key", config['access_key'])
-                    if 'secret_key' in config: conf.set("fs.s3a.secret.key", config['secret_key'])
-                    if 'endpoint' in config:
-                         conf.set("fs.s3a.endpoint", config['endpoint'])
-                         conf.set("fs.s3a.path.style.access", "true")
-                         
-                    if not test_path:
-                        bucket = config.get('bucket')
-                        test_path = f"s3a://{bucket}/" if bucket else "s3a:///"
-                    elif not test_path.startswith("s3a://"):
-                        test_path = f"s3a://{test_path}"
-
-                elif db_type == 'gcs':
-                    if 'credentials_json' in config:
-                         import json
-                         creds = json.loads(config['credentials_json'])
-                         conf.set("fs.gs.auth.service.account.email", creds.get('client_email'))
-                         conf.set("fs.gs.auth.service.account.private.key", creds.get('private_key'))
-                         conf.unset("fs.gs.auth.service.account.json.keyfile")
-                         conf.set("fs.gs.auth.service.account.private.key.id", creds.get('private_key_id'))
-                         conf.set("google.cloud.auth.service.account.enable", "true")
-                    
-                    if not test_path:
-                        bucket = config.get('bucket')
-                        test_path = f"gs://{bucket}/" if bucket else "gs:///"
-                    elif not test_path.startswith("gs://"):
-                        test_path = f"gs://{test_path}"
-
-                elif db_type == 'adls':
-                    account_name = config.get('account_name')
-                    account_key = config.get('account_key')
-                    if account_name and account_key:
-                        conf.set(f"fs.azure.account.key.{account_name}.dfs.core.windows.net", account_key)
-                    
-                    if not test_path:
-                        container = config.get('container')
-                        test_path = f"abfss://{container}@{account_name}.dfs.core.windows.net/" if container else f"abfss://@{account_name}.dfs.core.windows.net/"
-                    elif "dfs.core.windows.net" not in test_path:
-                         container = config.get('container')
-                         test_path = f"abfss://{container}@{account_name}.dfs.core.windows.net/{test_path}"
+                # Normalize Path
+                # If no table name (just testing bucket), _normalize_path handles empty path intelligently? 
+                # Let's check. Yes, it returns just the root like "s3a://bucket/" if path is empty.
+                full_test_path = ETLService._normalize_path(db_type, test_path, config)
 
                 # Validate connection
                 if table_name:
-                     # If specific file/folder provided, try to read schema/first row
                      fmt = "parquet"
                      if table_name.endswith(".csv"): fmt = "csv"
                      elif table_name.endswith(".json"): fmt = "json"
                      elif table_name.endswith(".txt"): fmt = "text"
-                     
-                     spark.read.format(fmt).load(test_path).limit(1).collect()
+                     spark.read.format(fmt).load(full_test_path).limit(1).collect()
                 else:
-                     # If only bucket/container provided, check access by listing status
-                     # This ensures credentials are valid even without reading a specific file
+                     # Check bucket access
                      try:
                          Path = sc._gateway.jvm.org.apache.hadoop.fs.Path
-                         fs = Path(test_path).getFileSystem(conf)
-                         fs.listStatus(Path(test_path))
+                         conf = sc._jsc.hadoopConfiguration()
+                         fs = Path(full_test_path).getFileSystem(conf)
+                         fs.listStatus(Path(full_test_path))
                      except Exception as e:
-                         # Enhance error message
                          raise Exception(f"Failed to access bucket/container: {str(e)}")
                 
             elif db_type == 'bigquery':
+                # Check auth by just listing datasets or doing a dry run? 
+                # For now, just loading nothing or similar. 
+                # User previous implementation just called collect() on empty DF?
+                # No, it did ".limit(1).collect()". 
+                # Ideally we should try to read a dummy query.
+                import base64
                 project_id = config.get('project_id')
                 dataset_id = config.get('dataset_id')
                 
-                df.limit(1).collect()
+                creds_b64 = base64.b64encode(config['credentials_json'].encode('utf-8')).decode('utf-8')
+                reader = spark.read \
+                    .format("bigquery") \
+                    .option("viewsEnabled", "true") \
+                    .option("materializationDataset", dataset_id) \
+                    .option("credentials", creds_b64)
+                
+                if project_id:
+                     reader = reader.option("parentProject", project_id)
+                
+                # Run simple query to test connection
+                reader.option("query", "SELECT 1").load().limit(1).collect()
                 
             else:
                 return False, f"Unsupported database type: {db_type}"
@@ -478,14 +456,12 @@ class ETLService:
         Returns list of dicts: {'name': str, 'type': str, 'nullable': bool}
         """
         try:
-            # We can reuse load_source_data with a small limit to infer schema
             df = ETLService.load_source_data(datasource, selected_columns=None, limit=1)
             
-            # Extract detailed schema
             return [
                 {
                     'name': field.name,
-                    'type': str(field.dataType).replace('()', ''), # Clean up type string
+                    'type': str(field.dataType).replace('()', ''),
                     'nullable': field.nullable
                 }
                 for field in df.schema.fields
@@ -615,38 +591,17 @@ class ETLService:
         """
         Write DataFrame to sink datasource.
         """
-        from app.core.security import decrypt_value
-        import tempfile
-        import json
+        import base64
         
         ls = datasource.linked_service
         if not ls:
-             # If lazy load failed or not present (should be eager loaded before)
              raise ValueError("Linked Service not found for sink datasource")
         db_type = ls.service_type
-        config = ls.connection_config.copy()
-        
-        # Decrypt sensitive fields
-        if 'password' in config:
-            config['password'] = decrypt_value(config['password'])
-        if 'credentials_json' in config:
-            config['credentials_json'] = decrypt_value(config['credentials_json'])
-        if 'secret_key' in config:
-             config['secret_key'] = decrypt_value(config['secret_key'])
-        if 'access_key' in config:
-             config['access_key'] = decrypt_value(config['access_key'])
-        if 'account_key' in config:
-             config['account_key'] = decrypt_value(config['account_key'])
+        # Helper: Decrypt config
+        config = ETLService._decrypt_config(ls.connection_config)
             
         if db_type in ['postgresql', 'mysql', 'sql_server', 'azure_sql']:
-            connection_string = ETLService._build_connection_string(db_type, config)
-            # Parse connection string to get JDBC URL (reusing logic from load_source_data)
-            if db_type == 'postgresql':
-                jdbc_url = connection_string.replace('postgresql://', 'jdbc:postgresql://')
-            elif db_type == 'mysql':
-                jdbc_url = connection_string.replace('mysql+pymysql://', 'jdbc:mysql://')
-            elif db_type in ['sql_server', 'azure_sql']:
-                jdbc_url = connection_string.replace('mssql+pyodbc://', 'jdbc:sqlserver://')
+            jdbc_url = ETLService._get_jdbc_url(db_type, config)
             
             df.write \
                 .format("jdbc") \
@@ -661,30 +616,13 @@ class ETLService:
             project_id = config.get('project_id')
             dataset_id = config.get('dataset_id')
             
-        elif db_type == 'bigquery':
-            project_id = config.get('project_id')
-            dataset_id = config.get('dataset_id')
-            
             # Credentials handling (Base64)
-            import base64
-            creds_json_str = config['credentials_json']
-            creds_b64 = base64.b64encode(creds_json_str.encode('utf-8')).decode('utf-8')
+            creds_b64 = base64.b64encode(config['credentials_json'].encode('utf-8')).decode('utf-8')
             
-            # Configure Spark Context Hadoop Configuration for GCS independently
+            # Configure Hadoop config for GCS (used internally by BQ writes)
             try:
                 sc = df.sparkSession.sparkContext
-                hconf = sc._jsc.hadoopConfiguration()
-                
-                # Parse JSON for GCS auth (BigQuery write often uses GCS under hood)
-                import json
-                creds = json.loads(creds_json_str)
-                hconf.set("fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem")
-                hconf.set("fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS")
-                hconf.set("google.cloud.auth.service.account.enable", "true")
-                hconf.set("fs.gs.auth.service.account.email", creds.get('client_email'))
-                hconf.set("fs.gs.auth.service.account.private.key", creds.get('private_key'))
-                hconf.set("fs.gs.auth.service.account.private.key.id", creds.get('private_key_id'))
-                
+                ETLService._configure_cloud_storage(sc, 'gcs', config)
             except Exception as e:
                 print(f"Warning: Failed to set Hadoop configuration: {e}")
 
@@ -692,7 +630,7 @@ class ETLService:
             if project_id:
                 full_table_id = f"{project_id}.{full_table_id}"
             
-            # Use Direct Write method (Storage Write API)
+            # Use Direct Write method
             writer = df.write \
                 .format("bigquery") \
                 .option("credentials", creds_b64) \
@@ -701,75 +639,21 @@ class ETLService:
             if project_id:
                 writer = writer.option("parentProject", project_id)
             
-            # Save mode
-            writer.mode(mode).save(full_table_id)
-            
-            # Save mode
             writer.mode(mode).save(full_table_id)
 
         elif db_type in ['s3', 'minio', 'gcs', 'adls']:
             # Configure FileSystem
             sc = df.sparkSession.sparkContext
-            conf = sc._jsc.hadoopConfiguration()
+            ETLService._configure_cloud_storage(sc, db_type, config)
             
-            path = table_name
+            # Normalize Path
+            path = ETLService._normalize_path(db_type, table_name, config)
+            
             # Determine format
             fmt = "parquet"
-            if path and path.endswith(".csv"): fmt = "csv"
-            elif path and path.endswith(".json"): fmt = "json"
-            elif path and path.endswith(".txt"): fmt = "text"
-            
-            if db_type in ['s3', 'minio']:
-                access_key = config.get('access_key')
-                secret_key = config.get('secret_key')
-                endpoint = config.get('endpoint')
-                
-                if access_key: conf.set("fs.s3a.access.key", access_key)
-                if secret_key: conf.set("fs.s3a.secret.key", secret_key)
-                if endpoint:
-                    conf.set("fs.s3a.endpoint", endpoint)
-                    conf.set("fs.s3a.path.style.access", "true")
-                
-                # Normalize path
-                if not path.startswith("s3a://"):
-                    bucket = config.get('bucket')
-                    if bucket and not path.startswith(bucket):
-                         path = f"s3a://{bucket}/{path.lstrip('/')}"
-                    else:
-                         path = f"s3a://{path}"
-
-            elif db_type == 'gcs':
-                # GCS Creds
-                if 'credentials_json' in config:
-                     import json
-                     creds = json.loads(config['credentials_json'])
-                     conf.set("fs.gs.auth.service.account.email", creds.get('client_email'))
-                     conf.set("fs.gs.auth.service.account.private.key", creds.get('private_key'))
-                     conf.set("fs.gs.auth.service.account.private.key.id", creds.get('private_key_id'))
-                     conf.set("google.cloud.auth.service.account.enable", "true")
-                     # Unset keyfile to avoid conflict
-                     conf.unset("fs.gs.auth.service.account.json.keyfile")
-                
-                if not path.startswith("gs://"):
-                    bucket = config.get('bucket')
-                    if bucket and not path.startswith(bucket):
-                         path = f"gs://{bucket}/{path.lstrip('/')}"
-                    else:
-                         path = f"gs://{path}"
-
-            elif db_type == 'adls':
-                account_name = config.get('account_name')
-                account_key = config.get('account_key')
-                
-                if account_name and account_key:
-                    conf.set(f"fs.azure.account.key.{account_name}.dfs.core.windows.net", account_key)
-                
-                if not path.startswith("abfss://"):
-                    container = config.get('container') 
-                    if container and not path.startswith(container):
-                         path = f"abfss://{container}@{account_name}.dfs.core.windows.net/{path.lstrip('/')}"
-                    else:
-                         path = f"abfss://{path}@{account_name}.dfs.core.windows.net" if not "dfs.core.windows.net" in path else path
+            if path.endswith(".csv"): fmt = "csv"
+            elif path.endswith(".json"): fmt = "json"
+            elif path.endswith(".txt"): fmt = "text"
             
             writer = df.write.format(fmt).mode(mode)
             if fmt == "csv": writer = writer.option("header", "true")
@@ -803,64 +687,131 @@ class ETLService:
             raise ValueError("Linked Service not found for data source")
 
         db_type = ls.service_type
-        config = ls.connection_config.copy()
+        config = ETLService._decrypt_config(ls.connection_config)
 
-        # Decrypt sensitive fields
-        if 'password' in config:
-            config['password'] = decrypt_value(config['password'])
-        if 'credentials_json' in config:
-            config['credentials_json'] = decrypt_value(config['credentials_json'])
+        if db_type in ['postgresql', 'mysql', 'sql_server', 'azure_sql']:
+            url = ETLService._build_connection_string(db_type, config)
+            return create_engine(url)
 
-        url = ""
-        connect_args = {}
-
-        if db_type == 'postgresql':
-            url = f"postgresql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
-        elif db_type == 'mysql':
-            url = f"mysql+pymysql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
-        elif db_type == 'sql_server':
-            url = f"mssql+pymysql://{config.get('username')}:{config.get('password')}@{config.get('host')}:{config.get('port')}/{config.get('database')}"
         elif db_type == 'bigquery':
-            url = f"bigquery://{config.get('project_id')}"
-            # Pass credentials info as dict directly to engine
-            if 'credentials_json' in config:
-                try:
-                    import json
-                    creds_dict = json.loads(config['credentials_json'])
-                    # 'credentials_info' is supported by pybigquery
-                    connect_args = {'credentials_info': creds_dict}
-                except Exception as e:
-                    print(f"Error parsing BQ credentials: {e}")
+            import json
+            try:
+                creds_dict = json.loads(config['credentials_json'])
+                url = f"bigquery://{config.get('project_id')}"
+                return create_engine(url, connect_args={'credentials_info': creds_dict})
+            except Exception as e:
+                print(f"Error handling BigQuery credentials: {e}")
+                return create_engine(f"bigquery://{config.get('project_id')}")
+
+        elif db_type in ['s3', 'minio', 'gcs', 'adls']:
+            # For file-based sources, we return a configuration dict
+            # We also infer schema to help the LLM
+            schema_info = "Schema unavailable"
+            try:
+                spark = ETLService.get_spark_session()
+                sc = spark.sparkContext
+                ETLService._configure_cloud_storage(sc, db_type, config)
+                path = ETLService._normalize_path(db_type, datasource.table_name, config)
+                
+                fmt = "parquet"
+                if path.endswith(".csv"): fmt = "csv"
+                elif path.endswith(".json"): fmt = "json"
+                elif path.endswith(".txt"): fmt = "text"
+                
+                reader = spark.read.format(fmt)
+                if fmt == "csv": reader = reader.option("header", "true").option("inferSchema", "true")
+                
+                # Load schema only (limit 1)
+                df = reader.load(path).limit(1)
+                schema_info = "\n".join([f"{f.name}: {f.dataType}" for f in df.schema.fields])
+                
+            except Exception as e:
+                print(f"Warning: Failed to infer schema for {db_type} source: {e}")
+
+            # Sanitize table name for Spark View (alphanumeric only usually)
+            view_name = datasource.table_name.replace(".", "_").replace("/", "_").replace("-", "_")
+
+            return {
+                'type': db_type,
+                'table_name': datasource.table_name,
+                'view_name': view_name,
+                'config': config,
+                'is_file_source': True,
+                'schema_info': schema_info
+            }
         else:
             raise ValueError(f"Unsupported database type for SQL Agent: {db_type}")
 
-        return create_engine(url, connect_args=connect_args)
-
     @staticmethod
-    async def execute_sql_query(engine, query: str) -> List[Dict[str, Any]]:
+    async def execute_sql_query(source, query: str) -> List[Dict[str, Any]]:
         """
-        Execute raw SQL query using provided SQLAlchemy engine and return results as list of dicts.
+        Execute SQL query using SQLAlchemy Engine (DBs) or Spark (Files).
+        Args:
+            source: SQLAlchemy Engine OR a Dictionary containing file source config
+            query: SQL query string
         """
         import pandas as pd
-        from sqlalchemy import text
-        from typing import List, Dict, Any
+        from sqlalchemy.engine.base import Engine
         
-        # Helper to run synchronous SQL code in async wrapper if needed, 
-        # or just use pandas which is sync. For MVP, sync pandas is fine if not blocking main loop too much, 
-        # or wrap in run_in_executor.
-        
-        try:
-            # We use pandas for easy DF conversion
-            with engine.connect() as conn:
-                df = pd.read_sql(text(query), conn)
+        # 1. Handle SQLAlchemy Engine
+        if isinstance(source, Engine):
+            try:
+                with source.connect() as conn:
+                    df = pd.read_sql(text(query), conn)
+                return df.astype(object).where(pd.notnull(df), None).to_dict('records')
+            except Exception as e:
+                print(f"Error executing SQL: {e}")
+                raise e
+
+        # 2. Handle Cloud Buckets (Spark)
+        elif isinstance(source, dict) and source.get('is_file_source'):
+            try:
+                from pyspark.sql import SparkSession
+                spark = ETLService.get_spark_session()
                 
-            # Convert to list of dicts (JSON serializable)
-            # Handle timestamps etc? Pandas to_dict('records') handles basics.
-            # Timestamp to string might be needed.
-            return df.astype(object).where(pd.notnull(df), None).to_dict('records')
-        except Exception as e:
-            print(f"Error executing SQL: {e}")
-            raise e
+                # Mock datasource objects to reuse load_source_data
+                class MockLinkedService:
+                    def __init__(self, service_type, connection_config):
+                        self.service_type = service_type
+                        self.connection_config = connection_config
+                
+                class MockDatasource:
+                    def __init__(self, table_name, linked_service):
+                        self.table_name = table_name
+                        self.linked_service = linked_service
+                
+                # Reconstruct mock objects
+                # Note: config is already decrypted in get_sqlalchemy_engine, but
+                # load_source_data attempts to decrypt again. decrypt_value handles plaintext gracefully? 
+                # Our _decrypt_config helper checks for 'gAAAA' prefix, so it's safe to pass already decrypted data.
+                mock_ls = MockLinkedService(source['type'], source['config'])
+                mock_ds = MockDatasource(source['table_name'], mock_ls)
+                
+                # Load DataFrame
+                df = ETLService.load_source_data(mock_ds, selected_columns=None)
+                
+                # Register Temp View for SQL access
+                view_name = source.get('view_name')
+                if not view_name:
+                     # Fallback sanitization if not provided
+                     view_name = source['table_name'].replace(".", "_").replace("/", "_").replace("-", "_")
+                
+                df.createOrReplaceTempView(view_name)
+                
+                # Execute Query via Spark SQL
+                print(f"DEBUG: Running Spark SQL on view {view_name}: {query}")
+                result_df = spark.sql(query)
+                
+                # Convert to Pandas for return format
+                pdf = result_df.toPandas()
+                return pdf.astype(object).where(pd.notnull(pdf), None).to_dict('records')
+                
+            except Exception as e:
+                print(f"Error executing Spark SQL: {e}")
+                raise e
+        
+        else:
+             raise ValueError("Invalid source provided to execute_sql_query")
 
     @staticmethod
     async def execute_pipeline(pipeline_id: int, db_session):

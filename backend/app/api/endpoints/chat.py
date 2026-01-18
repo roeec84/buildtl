@@ -117,22 +117,26 @@ async def send_message(
             )
             datasource = result.scalar_one_or_none()
             
-            # List of SQL types supported by our agent
-            sql_types = ['postgresql', 'mysql', 'sql_server', 'azure_sql', 'bigquery']
+            # List of SQL types supported by our agent (including files via Spark SQL)
+            sql_types = ['postgresql', 'mysql', 'sql_server', 'azure_sql', 'bigquery', 's3', 'minio', 'gcs', 'adls']
             
             if datasource:
                  print(f"DEBUG: Found DataSource: {datasource.name}, Service Type: {datasource.linked_service.service_type if datasource.linked_service else 'None'}")
 
             if datasource and datasource.linked_service and datasource.linked_service.service_type in sql_types:
-                # Use SQL Agent
+                # Use SQL Agent (or Spark SQL Agent for files)
                 print(f"DEBUG: Using SQL Agent for {datasource.name}")
                 try:
 
                     engine = await ETLService.get_sqlalchemy_engine(datasource.id, db)
+                    
                     # Mask password for logs
-                    conn_info = str(engine.url)
-                    masked_conn = conn_info.replace(conn_info.split(':')[2].split('@')[0], '******') if '@' in conn_info else conn_info
-                    print(f"DEBUG: Connection Engine: {masked_conn}")
+                    if hasattr(engine, 'url'):
+                        conn_info = str(engine.url)
+                        masked_conn = conn_info.replace(conn_info.split(':')[2].split('@')[0], '******') if '@' in conn_info else conn_info
+                        print(f"DEBUG: Connection Engine: {masked_conn}")
+                    else:
+                        print(f"DEBUG: Connection Source: {engine.get('type', 'Unknown')} (File-based)")
                     
                     response_content, formatted_history = await llm_service.generate_response_with_sql_agent(
                         user_message=request.message,
@@ -412,7 +416,7 @@ async def generate_chart(
             "messages": previous_messages + [HumanMessage(content=request.message)],
             "user_id": str(current_user.id),
             "dashboard_id": request.dashboardId,
-            "connection_string": conn_string,
+            "connection_string": engine,
             "retry_count": 0,
             "llm_service": llm_service,
             "chart_config": last_chart_config,
