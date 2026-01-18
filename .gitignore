@@ -5,4 +5,4 @@ backend/drivers
 backend/uploads
 backend/migrate_collections.py
 backend/test.py
-backend/test_setup.py
+backend/test_setup.py__pycache__/
