@@ -323,8 +323,6 @@ class ETLService:
                          path = f"abfss://{path}@{account_name}.dfs.core.windows.net" if not "dfs.core.windows.net" in path else path
                          
             reader = spark.read.format(fmt)
-                         
-            reader = spark.read.format(fmt)
             if fmt == "csv": reader = reader.option("header", "true").option("inferSchema", "true")
             df = reader.load(path)
 
