@@ -85,7 +85,6 @@ async def create_linked_service(
     db: AsyncSession = Depends(get_db)
 ):
     # Basic encryption for sensitive fields
-    secure_config = data.connection_config.copy()
     # Encrypt all sensitive fields
     secure_config = data.connection_config.copy()
     sensitive_keys = ["password", "secret_key", "account_key", "access_key", "credentials_json"]

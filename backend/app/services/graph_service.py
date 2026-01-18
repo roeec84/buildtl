@@ -156,7 +156,7 @@ async def sql_fixer_node(state: AgentState):
     
     Fix the SQL query. Return ONLY the fixed SQL query."""
     
-    response = await llm_service.llm.ainvoke([SystemMessage(content=system_prompt)])
+    response = await llm_service.llm.ainvoke([HumanMessage(content=system_prompt)])
     fixed_sql = response.content.strip()
     if fixed_sql.startswith("```"):
          fixed_sql = fixed_sql.replace("```sql", "").replace("```", "").strip()

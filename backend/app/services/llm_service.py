@@ -266,6 +266,63 @@ Answer the question based on the context above."""
             system_prompt
         )
 
+
+
+    async def _handle_file_source_agent(
+        self, 
+        user_message: str, 
+        engine_config: Dict[str, Any],
+        conversation_history: List[DBMessage]
+    ) -> Tuple[str, List[Dict[str, str]]]:
+        """
+        File-based "Agent" simulation. Generates SQL, executes via Spark, summarizes result.
+        """
+        try:
+             # 1. Generate SQL
+             print("DEBUG: Generating SQL for File Source...")
+             sql = await self.generate_sql_query(user_message, engine_config)
+             print(f"DEBUG: Generated SQL: {sql}")
+             
+             # 2. Execute SQL (Import locally to avoid circular dep)
+             from app.services.etl_service import ETLService
+             
+             try:
+                 print("DEBUG: Executing SQL on Spark...")
+                 results = await ETLService.execute_sql_query(engine_config, sql)
+                 # Limit results for context window
+                 results_sample = results[:20] 
+                 results_str = str(results_sample)
+                 if len(results) > 20:
+                     results_str += f"\n... ({len(results) - 20} more rows)"
+             except Exception as e:
+                 results_str = f"Execution Error: {str(e)}"
+                 
+             # 3. Generate Answer
+             prompt = f"""You are a data assistant. 
+User Query: {user_message}
+SQL Query Used: {sql}
+Data Results: 
+{results_str}
+
+Answer the user's question based on the data results.
+If the results contain an error, explain it.
+"""
+             print("DEBUG: Generating Final Answer...")
+             response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+             response_content = response.content
+             
+             # History
+             messages = []
+             if conversation_history:
+                 messages = self._convert_db_messages_to_langchain(conversation_history)
+             messages.append(HumanMessage(content=user_message))
+             messages.append(AIMessage(content=response_content))
+             
+             return response_content, self._format_message_history(messages)
+             
+        except Exception as e:
+             return f"File Agent Failed: {e}", []
+
     async def generate_response_with_sql_agent(
         self,
         user_message: str,
@@ -277,12 +334,16 @@ Answer the question based on the context above."""
 
         Args:
             user_message: The user's query
-            engine: SQLAlchemy Engine object
+            engine: SQLAlchemy Engine object OR Dict for file source
             conversation_history: Optional list of previous messages
 
         Returns:
             Tuple of (AI response, full conversation history)
         """
+        # Handle File Sources (Dict)
+        if isinstance(engine, dict) and engine.get('is_file_source'):
+            return await self._handle_file_source_agent(user_message, engine, conversation_history)
+
         try:
             print(f"DEBUG: Initializing SQL Agent...")
             # Initialize SQL Database
@@ -391,23 +452,15 @@ Input Context:
         
         try:
             safe_sample = data_sample[:5]
-            
             result = await chain.ainvoke({
                 "columns": columns,
                 "data_sample": safe_sample,
                 "user_message": user_message,
                 "refinement_context": refinement_context
             })
-            
-            
-            
-            
-            
-            
             return result
         except Exception as e:
             print(f"Error generating chart config: {e}")
-            # Fallback or re-raise
             raise e
 
     async def generate_sql_query(
@@ -426,9 +479,18 @@ Input Context:
             SQL Query string
         """
         try:
-            db = SQLDatabase(engine=engine)
-            schema = db.get_table_info()
-            dialect = db.dialect
+            schema = ""
+            dialect = "generic"
+            
+            # Handle File Source (Dict)
+            if isinstance(engine, dict) and engine.get('is_file_source'):
+                schema = f"Table: {engine.get('view_name')}\nColumns:\n{engine.get('schema_info', 'Unknown')}"
+                dialect = "Spark SQL"
+            else:
+                # Handle SQLAlchemy Engine
+                db = SQLDatabase(engine=engine)
+                schema = db.get_table_info()
+                dialect = db.dialect
             
             prompt = f"""You are an expert SQL Data Analyst.
 Target Database Dialect: {dialect}
@@ -454,8 +516,6 @@ If you use markdown, I will strip it, but prefer raw text.
                 sql = sql[3:]
             if sql.endswith("```"):
                 sql = sql[:-3]
-            
-            # Handle "Question: ... SQLQuery: ..." format often returned by Chat models in chains
             if "SQLQuery:" in sql:
                 sql = sql.split("SQLQuery:")[1]
             
